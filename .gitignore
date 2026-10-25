@@ -4,4 +4,7 @@ dist/
 .env
 .env.local
 *.log
+*.err
+*.tsbuildinfo
+tmp-logs/
 .DS_Store
