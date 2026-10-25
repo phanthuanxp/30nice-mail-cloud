@@ -7,7 +7,7 @@ class ApiController {
   constructor(private readonly service: MailCloudService) {}
 
   @Get('health') async health(){return {status:'ok',environment:'production-safe-mock',mailAdapter:'mock',productionReady:false,database:await this.service.databaseStatus()};}
-  @Get('api/v1/info') info(){return {project:'30NICE Mail Cloud',version:'0.2.0',features:['tenant-scoped-crud','audit-log','quota-validation','mailcow-adapter-planned']};}
+  @Get('api/v1/info') info(){return {project:'30NICE Mail Cloud',version:'0.3.0',features:['tenant-scoped-crud','postgres-persistence','domain-verification','mailbox-provisioning-jobs','audit-log','quota-validation','mailcow-adapter-planned']};}
   @Get('api/v1/tenants') tenants(@Headers('x-role') role?: string,@Headers('x-tenant-id') tenantId?: string){return this.service.listTenants(role,tenantId);}
   @Get('api/v1/audit') async audit(@Headers('x-role') role?: string){return this.service.listAudit(role);}
   @Post('api/v1/tenants') createTenant(@Body() body: {name?: string; slug?: string}, @Req() req: {headers: Record<string,string>}){return this.service.createTenant(body, req.headers['x-request-id']);}
