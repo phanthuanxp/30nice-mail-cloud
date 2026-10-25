@@ -9,6 +9,8 @@ services:
     volumes:
       - mailcloud_pg:/var/lib/postgresql/data
       - ./db/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_initial_schema.sql:ro
+    ports:
+      - "127.0.0.1:55432:5432"
     networks: [mailcloud-internal]
   redis:
     image: redis:7-alpine
