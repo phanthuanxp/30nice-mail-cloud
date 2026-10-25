@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mailcloud
+      POSTGRES_PASSWORD: localdevonly
+      POSTGRES_DB: mailcloud
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: [mailcloud_pg:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailcloud"]
+      interval: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:6380:6379"]
+volumes:
+  mailcloud_pg:

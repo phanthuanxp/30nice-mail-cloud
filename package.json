@@ -1,0 +1,16 @@
+{
+  "name": "30nice-mail-cloud",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@30nice/portal",
+    "dev:api": "npm run start:dev --workspace=@30nice/api",
+    "build": "npm run build --workspace=@30nice/portal",
+    "build:api": "npm run build --workspace=@30nice/api",
+    "typecheck": "npm run typecheck --workspace=@30nice/portal && npm run typecheck --workspace=@30nice/api",
+    "test": "npm run typecheck"
+  }
+}
