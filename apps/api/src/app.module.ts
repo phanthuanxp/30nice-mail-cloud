@@ -11,11 +11,11 @@ class ApiController {
   @Get('api/v1/tenants') tenants(@Headers('x-role') role?: string,@Headers('x-tenant-id') tenantId?: string){return this.service.listTenants(role,tenantId);}
   @Get('api/v1/audit') audit(@Headers('x-role') role?: string){return this.service.listAudit(role);}
   @Post('api/v1/tenants') createTenant(@Body() body: {name?: string; slug?: string}, @Req() req: {headers: Record<string,string>}){return this.service.createTenant(body, req.headers['x-request-id']);}
-  @Get('api/v1/tenants/:tenantId/domains') domains(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope?: string){return this.service.listDomains(this.service.assertTenant(tenantId, scope));}
-  @Post('api/v1/tenants/:tenantId/domains') createDomain(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {domain?: string}){return this.service.createDomain(this.service.assertTenant(tenantId, scope), body);}
-  @Get('api/v1/tenants/:tenantId/mailboxes') mailboxes(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope?: string){return this.service.listMailboxes(this.service.assertTenant(tenantId, scope));}
-  @Post('api/v1/tenants/:tenantId/mailboxes') createMailbox(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {address?: string; quotaGb?: number}){return this.service.createMailbox(this.service.assertTenant(tenantId, scope), body);}
-  @Put('api/v1/tenants/:tenantId/mailboxes/:mailboxId') updateMailbox(@Param('tenantId') tenantId: string, @Param('mailboxId') mailboxId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {quotaGb?: number; status?: 'active'|'disabled'}){return this.service.updateMailbox(this.service.assertTenant(tenantId, scope), mailboxId, body);}
+  @Get('api/v1/tenants/:tenantId/domains') async domains(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope?: string){return this.service.listDomains(await this.service.assertTenant(tenantId, scope));}
+  @Post('api/v1/tenants/:tenantId/domains') async createDomain(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {domain?: string}){return this.service.createDomain(await this.service.assertTenant(tenantId, scope), body);}
+  @Get('api/v1/tenants/:tenantId/mailboxes') async mailboxes(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope?: string){return this.service.listMailboxes(await this.service.assertTenant(tenantId, scope));}
+  @Post('api/v1/tenants/:tenantId/mailboxes') async createMailbox(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {address?: string; quotaGb?: number}){return this.service.createMailbox(await this.service.assertTenant(tenantId, scope), body);}
+  @Put('api/v1/tenants/:tenantId/mailboxes/:mailboxId') async updateMailbox(@Param('tenantId') tenantId: string, @Param('mailboxId') mailboxId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {quotaGb?: number; status?: 'active'|'disabled'}){return this.service.updateMailbox(await this.service.assertTenant(tenantId, scope), mailboxId, body);}
 }
 
 @Module({controllers:[ApiController],providers:[MailCloudService,DatabaseService]}) export class AppModule {}
