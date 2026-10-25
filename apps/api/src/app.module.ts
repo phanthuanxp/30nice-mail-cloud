@@ -1,11 +1,12 @@
 import {Body,Controller,Get,Headers,Module,Param,Post,Put,Req} from '@nestjs/common';
 import {MailCloudService} from './mail-cloud.service';
+import {DatabaseService} from './database.service';
 
 @Controller()
 class ApiController {
   constructor(private readonly service: MailCloudService) {}
 
-  @Get('health') health(){return {status:'ok',environment:'production-safe-mock',mailAdapter:'mock',productionReady:false};}
+  @Get('health') async health(){return {status:'ok',environment:'production-safe-mock',mailAdapter:'mock',productionReady:false,database:await this.service.databaseStatus()};}
   @Get('api/v1/info') info(){return {project:'30NICE Mail Cloud',version:'0.2.0',features:['tenant-scoped-crud','audit-log','quota-validation','mailcow-adapter-planned']};}
   @Get('api/v1/tenants') tenants(@Headers('x-role') role?: string,@Headers('x-tenant-id') tenantId?: string){return this.service.listTenants(role,tenantId);}
   @Get('api/v1/audit') audit(@Headers('x-role') role?: string){return this.service.listAudit(role);}
@@ -17,4 +18,4 @@ class ApiController {
   @Put('api/v1/tenants/:tenantId/mailboxes/:mailboxId') updateMailbox(@Param('tenantId') tenantId: string, @Param('mailboxId') mailboxId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {quotaGb?: number; status?: 'active'|'disabled'}){return this.service.updateMailbox(this.service.assertTenant(tenantId, scope), mailboxId, body);}
 }
 
-@Module({controllers:[ApiController],providers:[MailCloudService]}) export class AppModule {}
+@Module({controllers:[ApiController],providers:[MailCloudService,DatabaseService]}) export class AppModule {}
