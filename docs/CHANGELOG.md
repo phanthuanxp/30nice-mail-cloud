@@ -16,3 +16,4 @@
 - Added in-memory audit records and explicit production-safe mock health metadata.
 - Data is intentionally in-memory until PostgreSQL migrations are introduced; restart resets fixtures.
 - Restricted tenant listing and audit log access by role; tenant admins can only list their scoped tenant.
+- Added PostgreSQL/Redis production compose foundation and initial relational schema migration; not enabled for the API until a controlled data migration step.

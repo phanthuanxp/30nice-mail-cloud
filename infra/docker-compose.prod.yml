@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mailcloud}
+      POSTGRES_USER: ${POSTGRES_USER:-mailcloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - mailcloud_pg:/var/lib/postgresql/data
+      - ./db/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_initial_schema.sql:ro
+    networks: [mailcloud-internal]
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - mailcloud_redis:/data
+    networks: [mailcloud-internal]
+networks:
+  mailcloud-internal:
+    driver: bridge
+volumes:
+  mailcloud_pg:
+  mailcloud_redis:
