@@ -10,7 +10,8 @@ export class MailCloudService {
   private readonly mailboxes: Mailbox[]=[];
   private readonly audit:Array<Record<string,string>>=[];
 
-  listTenants(role?: string){if(role && !['super_admin','tenant_admin'].includes(role)) throw new ForbiddenException('Invalid role'); return this.tenants;}
+  listTenants(role?: string,tenantId?: string){if(role==='super_admin') return this.tenants; if(role==='tenant_admin'&&tenantId) return this.tenants.filter(t=>t.id===tenantId); throw new ForbiddenException('Super Admin or scoped Tenant Admin role required');}
+  listAudit(role?: string){if(role!=='super_admin') throw new ForbiddenException('Super Admin role required'); return this.audit;}
   createTenant(body:{name?:string;slug?:string},requestId?:string){if(!body.name||!body.slug) throw new BadRequestException('name and slug are required'); if(this.tenants.some(t=>t.slug===body.slug)) throw new BadRequestException('slug already exists'); const tenant={id:`tenant-${Date.now()}`,name:body.name,slug:body.slug,createdAt:new Date().toISOString()}; this.tenants.push(tenant); this.record('tenant.create',tenant.id,requestId); return tenant;}
   assertTenant(tenantId:string,scope?:string){if(scope && scope!==tenantId) throw new ForbiddenException('Cross-tenant access denied'); if(!this.tenants.some(t=>t.id===tenantId)) throw new NotFoundException('Tenant not found'); return tenantId;}
   listDomains(tenantId:string){return this.domains.filter(d=>d.tenantId===tenantId);}

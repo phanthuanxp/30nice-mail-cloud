@@ -7,7 +7,8 @@ class ApiController {
 
   @Get('health') health(){return {status:'ok',environment:'production-safe-mock',mailAdapter:'mock',productionReady:false};}
   @Get('api/v1/info') info(){return {project:'30NICE Mail Cloud',version:'0.2.0',features:['tenant-scoped-crud','audit-log','quota-validation','mailcow-adapter-planned']};}
-  @Get('api/v1/tenants') tenants(@Headers('x-role') role?: string){return this.service.listTenants(role);}
+  @Get('api/v1/tenants') tenants(@Headers('x-role') role?: string,@Headers('x-tenant-id') tenantId?: string){return this.service.listTenants(role,tenantId);}
+  @Get('api/v1/audit') audit(@Headers('x-role') role?: string){return this.service.listAudit(role);}
   @Post('api/v1/tenants') createTenant(@Body() body: {name?: string; slug?: string}, @Req() req: {headers: Record<string,string>}){return this.service.createTenant(body, req.headers['x-request-id']);}
   @Get('api/v1/tenants/:tenantId/domains') domains(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope?: string){return this.service.listDomains(this.service.assertTenant(tenantId, scope));}
   @Post('api/v1/tenants/:tenantId/domains') createDomain(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {domain?: string}){return this.service.createDomain(this.service.assertTenant(tenantId, scope), body);}

@@ -21,3 +21,5 @@ No DNS/MX change, real mailbox provisioning, real email sending, or production s
 ## Sprint 1 limitation
 
 The new CRUD surface uses resettable in-memory fixtures. PostgreSQL persistence, authentication and full tenant-member RBAC remain the next implementation step; this deployment is not a production email control plane yet.
+
+RBAC smoke checks: unscoped tenant listing is denied; tenant-admin listing is scoped; audit endpoint requires `super_admin`.
