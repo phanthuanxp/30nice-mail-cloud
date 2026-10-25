@@ -4,7 +4,7 @@ module.exports = {
       name: 'mailcloud-api',
       cwd: '/opt/30nice-mail-cloud',
       script: 'apps/api/dist/main.js',
-      env: { API_PORT: '3011', NODE_ENV: 'production' },
+      env: { API_PORT: '3013', NODE_ENV: 'production' },
     },
     {
       name: 'mailcloud-portal',
