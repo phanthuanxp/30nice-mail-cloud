@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-28 — Mailbox provisioning reliability
+
+- Convert mailbox quotas from the control plane's GB unit to Mailcow's API unit; reject fractional or out-of-range quota values.
+- Treat both Mailcow `danger` and `error` responses as failed operations.
+- Record provisioning jobs before calling Mailcow, retain failed-job details, and roll back control-plane mailbox rows when provisioning fails.
+- Update the control-plane mailbox record before Mailcow changes and restore the previous values if Mailcow rejects the update.
+- API TypeScript typecheck and production build pass.
+
 ## 2026-10-21 — Sprint 0
 
 - Installed workspace dependencies.
@@ -25,3 +33,4 @@
 - Added domain/mailbox provisioning, DNS health checks and mailbox update/disable synchronization with Mailcow.
 - Added Vietnamese control-plane login, domain/DNS wizard, member management and mailbox management UI.
 - Verified GitHub commit `be8098e` on VPS: API health reports `productionReady: true`, PostgreSQL connected and Mailcow HTTP 200.
+
