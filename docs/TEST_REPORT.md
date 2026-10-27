@@ -28,6 +28,11 @@ The original local-first phase did not change DNS/MX or handle production secret
 - Mailcow create/update mailbox calls are server-side and use bounded request timeouts; destructive delivery and Gmail/Outlook deliverability tests remain unverified.
 - Mailcow dry-run smoke test — PASS: `MAIL_ADAPTER_MODE=dry-run` returned dry-run success for domain and mailbox operations without requiring an API URL or key.
 
+## Dependency security audit (2026-10-27)
+
+- `npm audit --omit=dev` — REVIEW REQUIRED: 9 advisories (5 moderate, 4 high) were reported through NestJS/Express dependencies and the Next/PostCSS toolchain.
+- `npm audit fix --force` was not run because npm reports breaking major upgrades; remediation must be handled as a dedicated dependency upgrade with build and production regression tests.
+
 ## Sprint 1 limitation
 
 The new CRUD surface uses resettable in-memory fixtures. PostgreSQL persistence, authentication and full tenant-member RBAC remain the next implementation step; this deployment is not a production email control plane yet.
