@@ -164,13 +164,14 @@ export class WebmailService {
     });
   }
 
-  async send(token: string | undefined, input: { to?: string; cc?: string; subject?: string; text?: string }) {
+  async send(token: string | undefined, input: { to?: string; cc?: string; subject?: string; text?: string }, files: Array<{ buffer: Buffer; filename: string; contentType: string }> = []) {
     const session = this.session(token);
     const to = (input.to || '').split(',').map(value => value.trim()).filter(Boolean);
     const cc = (input.cc || '').split(',').map(value => value.trim()).filter(Boolean);
     const validAddress = (address: string) => /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(address);
     if (!to.length || to.length > 20 || to.some(address => !validAddress(address))) throw new BadRequestException('Nhập địa chỉ người nhận hợp lệ, tối đa 20 người');
     if (cc.length > 20 || cc.some(address => !validAddress(address))) throw new BadRequestException('Địa chỉ CC không hợp lệ');
+    if (files.length > 5 || files.reduce((total, file) => total + file.buffer.length, 0) > 20 * 1024 * 1024) throw new BadRequestException('Tổng dung lượng tệp đính kèm tối đa là 20 MB');
     const subject = (input.subject || '').trim().slice(0, 998);
     const text = input.text || '';
     if (!text.trim() && !subject) throw new BadRequestException('Email cần có tiêu đề hoặc nội dung');
@@ -178,7 +179,7 @@ export class WebmailService {
     const port = Number(process.env.MAILCOW_SMTP_PORT || 465);
     const transport = nodemailer.createTransport({ host: this.smtpHost, port, secure: port === 465, auth: { user: session.email, pass: session.password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 });
     try {
-      const sent = await transport.sendMail({ from: session.email, to, cc: cc.length ? cc : undefined, subject, text, headers: { 'X-30NICE-Webmail': '1' } });
+      const sent = await transport.sendMail({ from: session.email, to, cc: cc.length ? cc : undefined, subject, text, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } });
       return { accepted: sent.accepted.length, messageId: sent.messageId };
     } catch { throw new BadRequestException('Không gửi được thư. Vui lòng kiểm tra người nhận hoặc thử lại sau.'); }
     finally { transport.close(); }
