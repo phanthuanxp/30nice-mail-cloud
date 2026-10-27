@@ -20,6 +20,7 @@ export class DatabaseService implements OnModuleDestroy {
   }
   async ensureSeed(){
     if(!this.pool) return;
+    await this.pool.query('alter table tenant_members add column if not exists password_hash text');
     await this.pool.query("insert into tenants(name,slug) values ('30 NICE','30nice'),('GoForVietnam','goforvietnam') on conflict (slug) do nothing");
     await this.pool.query("insert into domains(tenant_id,domain) select t.id,v.domain from tenants t join (values ('30nice','30nice.vn'),('goforvietnam','goforvietnam.com')) v(slug,domain) on t.slug=v.slug on conflict (domain) do nothing");
   }
