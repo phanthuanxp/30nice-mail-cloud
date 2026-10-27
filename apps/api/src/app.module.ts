@@ -1,9 +1,10 @@
-import {Body,Controller,ForbiddenException,Get,Headers,Module,Param,Post,Put,Req,Res,Query,StreamableFile,BadRequestException} from '@nestjs/common';
+import {Body,Controller,ForbiddenException,Get,Headers,Module,Param,Post,Put,Req,Res,Query,StreamableFile,BadRequestException,UploadedFiles,UseInterceptors} from '@nestjs/common';
 import {MailCloudService} from './mail-cloud.service';
 import {DatabaseService} from './database.service';
 import {MailcowService} from './mailcow.service';
 import {AuthService} from './auth.service';
 import {WebmailService} from './webmail.service';
+import {FilesInterceptor} from '@nestjs/platform-express';
 
 @Controller()
 class ApiController {
@@ -34,8 +35,8 @@ class ApiController {
 class WebmailController {
   constructor(private readonly webmail:WebmailService){}
   private token(req:{headers:Record<string,string|undefined>}){const cookie=req.headers.cookie||'';const match=cookie.match(/(?:^|;\s*)30nice_webmail=([^;]+)/);return match?decodeURIComponent(match[1]):undefined;}
-  @Post('login') async login(@Body() body:{email?:string;password?:string},@Req() req:{ip?:string;headers:Record<string,string|undefined>},@Res({passthrough:true}) res:any){const result=await this.webmail.login(body.email||'',body.password||'',req.headers['x-real-ip']||req.ip||'unknown');res.cookie('30nice_webmail',result.token,{httpOnly:true,secure:true,sameSite:'strict',path:'/api/api/v1/webmail',maxAge:8*60*60*1000});return {email:result.email,expiresAt:result.expiresAt};}
-  @Post('logout') logout(@Req() req:any,@Res({passthrough:true}) res:any){this.webmail.logout(this.token(req));res.clearCookie('30nice_webmail',{httpOnly:true,secure:true,sameSite:'strict',path:'/api/api/v1/webmail'});return {ok:true};}
+  @Post('login') async login(@Body() body:{email?:string;password?:string},@Req() req:{ip?:string;headers:Record<string,string|undefined>},@Res({passthrough:true}) res:any){const result=await this.webmail.login(body.email||'',body.password||'',req.headers['x-real-ip']||req.ip||'unknown');const secure=process.env.NODE_ENV==='production'||req.headers['x-forwarded-proto']==='https';res.cookie('30nice_webmail',result.token,{httpOnly:true,secure,sameSite:'strict',path:'/api/api/v1/webmail',maxAge:8*60*60*1000});return {email:result.email,expiresAt:result.expiresAt};}
+  @Post('logout') logout(@Req() req:any,@Res({passthrough:true}) res:any){this.webmail.logout(this.token(req));res.clearCookie('30nice_webmail',{httpOnly:true,secure:process.env.NODE_ENV==='production'||req.headers?.['x-forwarded-proto']==='https',sameSite:'strict',path:'/api/api/v1/webmail'});return {ok:true};}
   @Get('session') session(@Req() req:any){return this.webmail.profile(this.token(req));}
   @Get('folders') folders(@Req() req:any){return this.webmail.folders(this.token(req));}
   @Get('messages') messages(@Req() req:any,@Query('folder') folder='INBOX',@Query('q') query=''){return this.webmail.messages(this.token(req),folder,query);}
@@ -43,7 +44,7 @@ class WebmailController {
   @Get('messages/:uid/attachments/:index') async attachment(@Req() req:any,@Param('uid') uid:string,@Param('index') index:string,@Query('folder') folder='INBOX',@Res({passthrough:true}) res:any){const file=await this.webmail.attachment(this.token(req),folder,Number(uid),Number(index));res.setHeader('X-Content-Type-Options','nosniff');return new StreamableFile(file.content,{type:file.contentType,disposition:`attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`});}
   @Post('messages/:uid/flags') flag(@Req() req:any,@Param('uid') uid:string,@Body() body:{folder?:string;flag?:'seen'|'unseen'|'flagged'|'unflagged'}){if(!body.flag||!['seen','unseen','flagged','unflagged'].includes(body.flag))throw new BadRequestException('Trạng thái thư không hợp lệ');return this.webmail.setFlag(this.token(req),body.folder||'INBOX',Number(uid),body.flag);}
   @Post('messages/:uid/trash') trash(@Req() req:any,@Param('uid') uid:string,@Body() body:{folder?:string}){return this.webmail.moveToTrash(this.token(req),body.folder||'INBOX',Number(uid));}
-  @Post('send') send(@Req() req:any,@Body() body:{to?:string;cc?:string;subject?:string;text?:string}){return this.webmail.send(this.token(req),body);}
+  @Post('send') @UseInterceptors(FilesInterceptor('attachments',5,{limits:{fileSize:5*1024*1024,files:5}})) send(@Req() req:any,@Body() body:{to?:string;cc?:string;subject?:string;text?:string},@UploadedFiles() files:Array<{buffer:Buffer;originalname:string;mimetype:string}> = []){return this.webmail.send(this.token(req),body,files.map(file=>({buffer:file.buffer,filename:file.originalname,contentType:file.mimetype})));}
 }
 
 @Module({controllers:[ApiController,WebmailController],providers:[MailCloudService,DatabaseService,MailcowService,AuthService,WebmailService]}) export class AppModule {}
