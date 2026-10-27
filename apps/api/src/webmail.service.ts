@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 
 type WebmailSession = { email: string; password: string; expiresAt: number };
 type MailAddress = { address?: string; name?: string };
+type DraftInput = { draftId?: string; replaceUid?: number; to?: string; cc?: string; subject?: string; text?: string };
 
 @Injectable()
 export class WebmailService {
@@ -102,7 +103,7 @@ export class WebmailService {
           const from = (item.envelope?.from || []) as MailAddress[];
           const to = (item.envelope?.to || []) as MailAddress[];
           const date = item.envelope?.date || item.internalDate || null;
-          return { uid: item.uid, subject: item.envelope?.subject || '(Không có tiêu đề)', from: from.map(address => ({ address: address.address || '', name: address.name || '' })), to: to.map(address => ({ address: address.address || '', name: address.name || '' })), date: date ? new Date(date).toISOString() : null, seen: item.flags?.has('\\Seen') || false, flagged: item.flags?.has('\\Flagged') || false, size: item.size || 0 };
+          return { uid: item.uid, subject: item.envelope?.subject || '(Không có tiêu đề)', from: from.map(address => ({ address: address.address || '', name: address.name || '' })), to: to.map(address => ({ address: address.address || '', name: address.name || '' })), date: date ? new Date(date).toISOString() : null, seen: item.flags?.has('\\Seen') || false, flagged: item.flags?.has('\\Flagged') || false, draft: item.flags?.has('\\Draft') || false, size: item.size || 0 };
         }).sort((a, b) => b.uid - a.uid);
         return { folder, total, page, pageSize, messages };
       } finally { lock.release(); }
@@ -129,7 +130,9 @@ export class WebmailService {
         const ccValues = Array.isArray(parsed.cc) ? parsed.cc.flatMap(value => value.value) : parsed.cc?.value || [];
         const ccAddresses = ccValues.map(value => ({ address: value.address || '', name: value.name || '' })).filter(value => value.address || value.name);
         const cc = ccAddresses.map(value => value.address || value.name).join(', ');
-        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, size: message.source.length, text: parsed.text || '', html: safeHtml, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
+        const draftIdHeader = parsed.headers.get('x-30nice-draft-id');
+        const draftId = typeof draftIdHeader === 'string' ? draftIdHeader : undefined;
+        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, draftId, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, draft: message.flags?.has('\\Draft') || false, size: message.source.length, text: parsed.text || '', html: safeHtml, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
       } finally { lock.release(); }
     });
   }
@@ -197,7 +200,7 @@ export class WebmailService {
     });
   }
 
-  async send(token: string | undefined, input: { to?: string; cc?: string; subject?: string; text?: string }, files: Array<{ buffer: Buffer; filename: string; contentType: string }> = []) {
+  async send(token: string | undefined, input: DraftInput, files: Array<{ buffer: Buffer; filename: string; contentType: string }> = []) {
     const session = this.session(token);
     const to = (input.to || '').split(',').map(value => value.trim()).filter(Boolean);
     const cc = (input.cc || '').split(',').map(value => value.trim()).filter(Boolean);
@@ -227,9 +230,74 @@ export class WebmailService {
           if (sentFolder) savedToSent = Boolean(await client.append(sentFolder.path, rendered.message, ['\\Seen']));
         } finally { await client.logout().catch(() => undefined); }
       } catch { savedToSent = false; }
-      return { accepted: sent.accepted.length, messageId: rendered.messageId || sent.messageId, savedToSent };
+      const draftRemoved = input.draftId ? await this.removeDraftCopies(session.email, session.password, input.draftId, input.replaceUid) : true;
+      return { accepted: sent.accepted.length, messageId: rendered.messageId || sent.messageId, savedToSent, draftRemoved };
     } catch { throw new BadRequestException('Không gửi được thư. Vui lòng kiểm tra người nhận hoặc thử lại sau.'); }
     finally { renderer.close(); transport.close(); }
+  }
+
+  async saveDraft(token: string | undefined, input: DraftInput, files: Array<{ buffer: Buffer; filename: string; contentType: string }> = []) {
+    const session = this.session(token);
+    const draftId = input.draftId || '';
+    if (!/^[a-z0-9-]{16,80}$/i.test(draftId)) throw new BadRequestException('Mã thư nháp không hợp lệ');
+    const to = (input.to || '').split(',').map(value => value.trim()).filter(Boolean);
+    const cc = (input.cc || '').split(',').map(value => value.trim()).filter(Boolean);
+    if (to.length > 20 || cc.length > 20 || [...to, ...cc].some(value => value.length > 254)) throw new BadRequestException('Danh sách người nhận trong thư nháp không hợp lệ');
+    if ((input.subject || '').length > 998 || (input.text || '').length > 50_000) throw new BadRequestException('Thư nháp vượt quá giới hạn cho phép');
+    if (files.length > 5 || files.reduce((total, file) => total + file.buffer.length, 0) > 20 * 1024 * 1024) throw new BadRequestException('Tổng dung lượng tệp đính kèm tối đa là 20 MB');
+    return this.withClient(token, async client => {
+      const folders = await client.list();
+      const drafts = folders.find(item => item.specialUse === '\\Drafts') || folders.find(item => /^(drafts|draft|thư nháp)$/i.test(item.name));
+      if (!drafts) throw new BadRequestException('Hộp thư chưa có thư mục Thư nháp');
+      const lock = await client.getMailboxLock(drafts.path);
+      const renderer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'windows' });
+      try {
+        const existing = await client.search({ header: { 'X-30NICE-Draft-Id': draftId } }, { uid: true });
+        const oldUids = new Set(Array.isArray(existing) ? existing : []);
+        if (input.replaceUid && Number.isSafeInteger(input.replaceUid)) oldUids.add(input.replaceUid);
+        const rendered = await renderer.sendMail({
+          from: session.email,
+          to: to.length ? to : undefined,
+          cc: cc.length ? cc : undefined,
+          subject: input.subject || '',
+          text: input.text || '',
+          headers: { 'X-30NICE-Draft-Id': draftId },
+          attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })),
+        });
+        if (!Buffer.isBuffer(rendered.message)) throw new Error('Draft MIME message was not buffered');
+        const appended = await client.append(drafts.path, rendered.message, ['\\Draft', '\\Seen']);
+        if (!appended) throw new BadRequestException('Không thể lưu thư nháp');
+        if (oldUids.size) await client.messageDelete([...oldUids], { uid: true });
+        return { draftId, uid: appended.uid || null, saved: true };
+      } finally { lock.release(); renderer.close(); }
+    });
+  }
+
+  private async removeDraftCopies(email: string, password: string, draftId: string, replaceUid?: number) {
+    if (!/^[a-z0-9-]{16,80}$/i.test(draftId)) return false;
+    const client = this.makeClient(email, password);
+    try {
+      await client.connect();
+      const folders = await client.list();
+      const drafts = folders.find(item => item.specialUse === '\\Drafts') || folders.find(item => /^(drafts|draft|thư nháp)$/i.test(item.name));
+      if (!drafts) return false;
+      const lock = await client.getMailboxLock(drafts.path);
+      try {
+        const found = await client.search({ header: { 'X-30NICE-Draft-Id': draftId } }, { uid: true });
+        const uids = new Set(Array.isArray(found) ? found : []);
+        if (replaceUid && Number.isSafeInteger(replaceUid)) uids.add(replaceUid);
+        return uids.size ? await client.messageDelete([...uids], { uid: true }) : true;
+      } finally { lock.release(); }
+    } catch { return false; }
+    finally { await client.logout().catch(() => undefined); }
+  }
+
+  async discardDraft(token: string | undefined, input: { draftId?: string; replaceUid?: number }) {
+    const session = this.session(token);
+    if (!input.draftId || !/^[a-z0-9-]{16,80}$/i.test(input.draftId)) throw new BadRequestException('Mã thư nháp không hợp lệ');
+    const deleted = await this.removeDraftCopies(session.email, session.password, input.draftId, input.replaceUid);
+    if (!deleted) throw new BadRequestException('Không thể xóa thư nháp');
+    return { discarded: true };
   }
 }
 
