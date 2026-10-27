@@ -6,6 +6,7 @@
 - Update the TypeScript configuration for the new compiler and Next.js generated route types.
 - Confirm the production dependency audit and full dependency audit both report zero vulnerabilities in the staging checkout.
 - Confirm API/portal builds, workspace typechecks and the Mailcow adapter smoke test pass in staging.
+- Install official Node.js 22.23.4 in an isolated `/opt/30nice-mail-cloud-runtime` directory for the two Mail Cloud PM2 processes; verify the archive checksum against Node.js SHASUMS.
 
 ## 2026-10-28 — Mailbox provisioning reliability
 
