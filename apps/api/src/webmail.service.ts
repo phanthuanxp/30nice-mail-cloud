@@ -119,33 +119,46 @@ export class WebmailService {
   }
 
   async messages(token: string | undefined, folder: string, query = '', requestedPage = 1, filter: 'all' | 'unread' | 'starred' = 'all') {
-    if (!folder || folder.length > 255) throw new BadRequestException('Thư mục không hợp lệ');
+    if (!folder || (folder !== '*' && folder.length > 255)) throw new BadRequestException('Thư mục không hợp lệ');
     if (query.length > 200) throw new BadRequestException('Từ khóa tìm kiếm tối đa 200 ký tự');
     const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, 1_000_000) : 1;
     const pageSize = 50;
     return this.withClient(token, async client => {
-      const lock = await client.getMailboxLock(folder, { readOnly: true });
-      try {
-        const term = query.trim().toLocaleLowerCase();
-        const criteria: { all?: boolean; text?: string; seen?: boolean; flagged?: boolean } = {};
-        if (term) criteria.text = term;
-        else criteria.all = true;
-        if (filter === 'unread') criteria.seen = false;
-        else if (filter === 'starred') criteria.flagged = true;
+      const term = query.trim().toLocaleLowerCase();
+      if (folder === '*' && !term) throw new BadRequestException('Nhập từ khóa để tìm trong toàn bộ hộp thư');
+      const criteria: { all?: boolean; text?: string; seen?: boolean; flagged?: boolean } = {};
+      if (term) criteria.text = term;
+      else criteria.all = true;
+      if (filter === 'unread') criteria.seen = false;
+      else if (filter === 'starred') criteria.flagged = true;
+
+      const folders = folder === '*'
+        ? (await client.list()).filter(item => item.specialUse !== '\\Trash' && item.specialUse !== '\\Junk' && !/^(trash|deleted items|junk|spam|thư rác|thùng rác)$/i.test(item.name))
+        : [{ path: folder }];
+      let total = 0;
+      const candidates: Array<{ uid: number; folder: string; date: string | null; subject: string; from: Array<{ address: string; name: string }>; to: Array<{ address: string; name: string }>; seen: boolean; flagged: boolean; draft: boolean; size: number }> = [];
+      for (const mailbox of folders) {
+        const lock = await client.getMailboxLock(mailbox.path, { readOnly: true });
+        try {
         const matching = await client.search(criteria, { uid: true });
         const matchingUids = Array.isArray(matching) ? matching : [];
-        const total = matchingUids.length;
-        const pageUids = matchingUids.slice(Math.max(0, total - page * pageSize), Math.max(0, total - (page - 1) * pageSize)).reverse();
-        if (!pageUids.length) return { folder, total, page, pageSize, messages: [] };
-        const fetched = await client.fetchAll(pageUids, { envelope: true, flags: true, internalDate: true, size: true, uid: true }, { uid: true });
-        const messages = fetched.map(item => {
+        total += matchingUids.length;
+        const candidateUids = folder === '*'
+          ? matchingUids.slice(-page * pageSize).reverse()
+          : matchingUids.slice(Math.max(0, matchingUids.length - page * pageSize), Math.max(0, matchingUids.length - (page - 1) * pageSize)).reverse();
+        if (!candidateUids.length) continue;
+        const fetched = await client.fetchAll(candidateUids, { envelope: true, flags: true, internalDate: true, size: true, uid: true }, { uid: true });
+        candidates.push(...fetched.map(item => {
           const from = (item.envelope?.from || []) as MailAddress[];
           const to = (item.envelope?.to || []) as MailAddress[];
           const date = item.envelope?.date || item.internalDate || null;
-          return { uid: item.uid, subject: item.envelope?.subject || '(Không có tiêu đề)', from: from.map(address => ({ address: address.address || '', name: address.name || '' })), to: to.map(address => ({ address: address.address || '', name: address.name || '' })), date: date ? new Date(date).toISOString() : null, seen: item.flags?.has('\\Seen') || false, flagged: item.flags?.has('\\Flagged') || false, draft: item.flags?.has('\\Draft') || false, size: item.size || 0 };
-        }).sort((a, b) => b.uid - a.uid);
-        return { folder, total, page, pageSize, messages };
-      } finally { lock.release(); }
+          return { uid: item.uid, folder: mailbox.path, subject: item.envelope?.subject || '(Không có tiêu đề)', from: from.map(address => ({ address: address.address || '', name: address.name || '' })), to: to.map(address => ({ address: address.address || '', name: address.name || '' })), date: date ? new Date(date).toISOString() : null, seen: item.flags?.has('\\Seen') || false, flagged: item.flags?.has('\\Flagged') || false, draft: item.flags?.has('\\Draft') || false, size: item.size || 0 };
+        }));
+        } finally { lock.release(); }
+      }
+      candidates.sort((a, b) => (Date.parse(b.date || '') || 0) - (Date.parse(a.date || '') || 0));
+      const messages = candidates.slice((page - 1) * pageSize, page * pageSize);
+      return { folder, total, page, pageSize, messages };
     });
   }
 
