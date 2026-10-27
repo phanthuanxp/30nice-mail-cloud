@@ -270,9 +270,22 @@ export default function WebmailClient() {
       body.set('draftId', compose.draftId); body.set('replaceUid', String(compose.replaceUid || ''));
       body.set('to', compose.to); body.set('cc', compose.cc); body.set('subject', compose.subject); body.set('text', compose.text); body.set('html', compose.html);
       compose.files.forEach(file => body.append('attachments', file, file.name));
-      const result = await request('/send', { method: 'POST', body }) as { savedToSent: boolean; draftRemoved: boolean };
+      const result = await request('/send', { method: 'POST', body }) as { accepted: string[]; rejected: string[]; savedToSent: boolean; draftRemoved: boolean };
+      if (result.rejected.length) {
+        const rejected = new Set(result.rejected.map(address => address.toLowerCase()));
+        const rejectedTo = compose.to.split(',').map(address => address.trim()).filter(address => rejected.has(address.toLowerCase()));
+        const rejectedCc = compose.cc.split(',').map(address => address.trim()).filter(address => rejected.has(address.toLowerCase()));
+        const failedList = [...rejectedTo, ...rejectedCc];
+        const shown = failedList.slice(0, 4).join(', ');
+        const suffix = failedList.length > 4 ? ` và ${failedList.length - 4} địa chỉ khác` : '';
+        setCompose({ ...compose, draftId: crypto.randomUUID(), replaceUid: undefined, to: rejectedTo.join(', '), cc: rejectedCc.join(', ') });
+        setShowCc(rejectedCc.length > 0);
+        setDraftStatus(`Đã gửi một phần; kiểm tra ô Đến/CC để gửi lại ${failedList.length} địa chỉ bị từ chối.`);
+        setNotice(`Đã gửi cho ${result.accepted.length}/${result.accepted.length + result.rejected.length} người nhận. Đã giữ lại địa chỉ bị từ chối để anh gửi lại: ${shown}${suffix}.${!result.draftRemoved ? ' Bản nháp cũ vẫn còn nguyên danh sách ban đầu; không gửi lại bản đó để tránh gửi trùng.' : ''}`);
+        return;
+      }
       setCompose(null); setShowCc(false);
-      setNotice(!result.draftRemoved ? 'Thư đã gửi; bản nháp cũ chưa được dọn khỏi thư mục Thư nháp. Không cần gửi lại.' : result.savedToSent ? 'Đã gửi thư và lưu bản sao trong Đã gửi.' : 'Thư đã được máy chủ gửi đi, nhưng chưa lưu được bản sao vào Đã gửi. Không cần gửi lại.');
+      setNotice(!result.draftRemoved ? 'Đã gửi thư. Bản nháp cũ vẫn còn trong Thư nháp; hãy xóa bản nháp cũ, không gửi lại để tránh gửi trùng.' : result.savedToSent ? 'Đã gửi thư và lưu bản sao trong Đã gửi.' : 'Máy chủ đã gửi thư nhưng chưa lưu được bản sao vào Đã gửi. Không gửi lại để tránh gửi trùng.');
       const sent = folders.find(item => item.specialUse === '\\Sent'); if (sent) { setPage(1); setFolder(sent.path); setQuery(''); setSearchInput(''); setListFilter('all'); setSelected(null); await loadMessages(sent.path, '', 1, 'all'); try { await loadFolders(); } catch { setNotice('Đã gửi thư. Không tải lại được danh sách thư mục; hãy bấm Làm mới.'); } }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không gửi được thư.'); }
     finally { setBusy(false); }
