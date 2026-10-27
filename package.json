@@ -13,7 +13,9 @@
     "test:mailcow": "npm run build:api && node scripts/smoke-mailcow-adapter.cjs",
     "test:auth": "npm run build:api && node scripts/smoke-auth.cjs",
     "test:mailbox": "npm run build:api && node scripts/smoke-mailbox-operations.cjs",
+    "test:domain": "npm run build:api && node scripts/smoke-domain-provisioning.cjs",
     "typecheck": "npm run typecheck --workspace=@30nice/portal && npm run typecheck --workspace=@30nice/api",
     "test": "npm run typecheck"
   }
 }
+
