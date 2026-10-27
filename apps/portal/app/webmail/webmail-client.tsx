@@ -43,6 +43,9 @@ export default function WebmailClient() {
   const [draftStatus, setDraftStatus] = useState('');
   const [showCc, setShowCc] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
+  const [activePanel, setActivePanel] = useState<'settings' | 'help' | null>(null);
+  const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
+  const [densityReady, setDensityReady] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const draftQueue = useRef<Promise<void>>(Promise.resolve());
   const draftTimer = useRef<number | null>(null);
@@ -78,6 +81,13 @@ export default function WebmailClient() {
     draftTimer.current = window.setTimeout(() => { void saveDraft(compose); }, 1000);
     return () => { if (draftTimer.current !== null) window.clearTimeout(draftTimer.current); };
   }, [compose, saveDraft]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('30nice_webmail_density');
+    if (stored === 'compact' || stored === 'comfortable') setDensity(stored);
+    setDensityReady(true);
+  }, []);
+  useEffect(() => { if (densityReady) localStorage.setItem('30nice_webmail_density', density); }, [density, densityReady]);
 
   const loadFolders = useCallback(async () => {
     const data = await request('/folders') as Folder[];
@@ -259,12 +269,12 @@ export default function WebmailClient() {
 
   if (!authenticated) return <div className="wm-login-page"><div className="wm-login-card"><div className="wm-brand-mark"><Mail size={25} /></div><div className="wm-login-brand">30NICE <span>Mail</span></div><h1>Chào mừng bạn trở lại</h1><p>Đăng nhập bằng địa chỉ email doanh nghiệp của bạn.</p>{error && <div className="wm-alert">{error}</div>}<form onSubmit={signIn}><label>Địa chỉ email<input type="email" autoComplete="username" required placeholder="ban@congty.vn" value={email} onChange={event => setEmail(event.target.value)} /></label><label>Mật khẩu<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} /></label><button className="wm-button-primary wm-login-submit" disabled={busy}>{busy ? 'Đang đăng nhập…' : 'Đăng nhập'}</button></form><div className="wm-login-help"><ShieldCheck size={15} /> Phiên đăng nhập được bảo vệ</div><small>30NICE Mail · Email doanh nghiệp</small></div></div>;
 
-  return <div className="wm-app">
+  return <div className={`wm-app ${density === 'compact' ? 'wm-compact' : ''}`}>
     <header className="wm-topbar">
       <button className="wm-icon-btn wm-mobile-menu" aria-label="Mở điều hướng" onClick={() => setMobileNav(!mobileNav)}><Menu size={21} /></button>
       <div className="wm-logo"><div className="wm-brand-mark"><Mail size={22} /></div><span>30NICE <b>Mail</b></span></div>
       <form className="wm-search" onSubmit={event => { event.preventDefault(); setQuery(searchInput); void loadMessages(folder, searchInput); }}><Search size={20} /><input aria-label="Tìm kiếm thư" placeholder="Tìm trong thư" value={searchInput} onChange={event => setSearchInput(event.target.value)} /><button aria-label="Tìm kiếm"><Search size={17} /></button></form>
-      <div className="wm-top-actions"><button className="wm-icon-btn wm-help" aria-label="Trợ giúp"><CircleHelp size={19} /></button><div className="wm-user-chip"><span className="wm-avatar wm-avatar-small">{initials(account)}</span><span className="wm-user-email">{account}</span><ChevronDown size={15} /></div><button className="wm-icon-btn wm-logout" aria-label="Đăng xuất" title="Đăng xuất" onClick={() => void signOut()}><LogOut size={18} /></button></div>
+      <div className="wm-top-actions"><button className="wm-icon-btn wm-help" aria-label="Trợ giúp" title="Trợ giúp" onClick={() => setActivePanel('help')}><CircleHelp size={19} /></button><div className="wm-user-chip"><span className="wm-avatar wm-avatar-small">{initials(account)}</span><span className="wm-user-email">{account}</span><ChevronDown size={15} /></div><button className="wm-icon-btn wm-logout" aria-label="Đăng xuất" title="Đăng xuất" onClick={() => void signOut()}><LogOut size={18} /></button></div>
     </header>
     <div className="wm-layout">
       <aside className={`wm-sidebar ${mobileNav ? 'wm-sidebar-open' : ''}`}>
@@ -272,7 +282,7 @@ export default function WebmailClient() {
         <nav className="wm-folder-nav" aria-label="Thư mục">
           {folders.map(item => { const Icon = FOLDER_ICONS[item.specialUse || ''] || (item.path.toUpperCase() === 'INBOX' ? Inbox : Mail); return <button key={item.path} className={`wm-folder-link ${folder === item.path && !selected ? 'active' : ''}`} onClick={() => { setPage(1); setFolder(item.path); setSelected(null); setMobileNav(false); }}><Icon size={18} /><span>{folderLabel(item)}</span>{item.unread > 0 && <b>{item.unread}</b>}</button>; })}
         </nav>
-        <div className="wm-sidebar-bottom"><div className="wm-storage"><div className="wm-storage-title"><span>Dung lượng hộp thư</span><span><ShieldCheck size={15} /></span></div><div className="wm-storage-bar"><i /></div><small>Được quản lý bởi quản trị viên</small></div><button className="wm-folder-link"><Settings size={18} /><span>Cài đặt</span></button><button className="wm-folder-link"><CircleHelp size={18} /><span>Trợ giúp & phản hồi</span></button></div>
+        <div className="wm-sidebar-bottom"><div className="wm-storage"><div className="wm-storage-title"><span>Dung lượng hộp thư</span><span><ShieldCheck size={15} /></span></div><div className="wm-storage-bar"><i /></div><small>Được quản lý bởi quản trị viên</small></div><button className="wm-folder-link" onClick={() => setActivePanel('settings')}><Settings size={18} /><span>Cài đặt</span></button><button className="wm-folder-link" onClick={() => setActivePanel('help')}><CircleHelp size={18} /><span>Trợ giúp & phản hồi</span></button></div>
       </aside>
       <main className="wm-main">
         {error && <div className="wm-inline-alert"><span>{error}</span><button aria-label="Đóng" onClick={() => setError('')}><X size={16} /></button></div>}{notice && <div className="wm-inline-notice" role="status"><span>{notice}</span><button aria-label="Đóng thông báo" onClick={() => setNotice('')}><X size={16} /></button></div>}
@@ -285,6 +295,7 @@ export default function WebmailClient() {
         </section>
       </main>
     </div>
+    {activePanel && <div className="wm-modal-backdrop wm-panel-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setActivePanel(null); }}><section className="wm-preferences-panel" role="dialog" aria-modal="true" aria-labelledby="wm-preferences-title"><header><div><small>30NICE MAIL</small><h2 id="wm-preferences-title">{activePanel === 'settings' ? 'Cài đặt' : 'Trợ giúp sử dụng'}</h2></div><button className="wm-icon-btn" aria-label="Đóng" onClick={() => setActivePanel(null)}><X size={19} /></button></header>{activePanel === 'settings' ? <div className="wm-preferences-content"><label>Mật độ danh sách thư<select value={density} onChange={event => setDensity(event.target.value as 'comfortable' | 'compact')}><option value="comfortable">Thoải mái</option><option value="compact">Gọn</option></select></label><p>Cài đặt này chỉ áp dụng trên trình duyệt hiện tại.</p><div className="wm-account-detail"><ShieldCheck size={17} /><span><b>Tài khoản đang đăng nhập</b><small>{account}</small></span></div></div> : <div className="wm-preferences-content"><p className="wm-help-intro">Các thao tác thường dùng trong hộp thư 30NICE.</p><ol className="wm-help-steps"><li><b>Soạn thư:</b> chọn “Soạn thư”, nhập người nhận và nội dung, sau đó bấm “Gửi”. Thư nháp tự lưu khi bạn dừng gõ.</li><li><b>Tìm thư:</b> nhập từ khóa; kết quả được tìm trên máy chủ trong thư mục đang mở.</li><li><b>Quản lý thư:</b> dùng dấu sao, lưu trữ, đánh dấu đã đọc/chưa đọc hoặc chuyển thư vào Thùng rác.</li><li><b>Tệp đính kèm:</b> tối đa 5 tệp, mỗi tệp tối đa 5 MB và tổng dung lượng tối đa 20 MB.</li></ol><a className="wm-support-link" href="mailto:admin@30nice.vn?subject=H%E1%BB%97%20tr%E1%BB%A3%2030NICE%20Mail">Liên hệ hỗ trợ: admin@30nice.vn</a></div>}</section></div>}
     {compose && <div className="wm-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) void closeComposer(); }}><form className="wm-compose-window" onSubmit={sendMessage}><div className="wm-compose-title"><b>Thư mới</b><span className="wm-draft-status" role="status">{draftStatus}</span><button type="button" aria-label="Đóng" onClick={() => void closeComposer()}><X size={18} /></button></div><label className="wm-compose-field"><span>Đến</span><input value={compose.to} onChange={event => setCompose({ ...compose, to: event.target.value })} placeholder="Địa chỉ email, cách nhau bằng dấu phẩy" /><button type="button" onClick={() => setShowCc(!showCc)}>CC</button></label>{showCc && <label className="wm-compose-field"><span>CC</span><input value={compose.cc} onChange={event => setCompose({ ...compose, cc: event.target.value })} placeholder="Thêm người nhận CC" /></label>}<label className="wm-compose-field"><span>Chủ đề</span><input value={compose.subject} onChange={event => setCompose({ ...compose, subject: event.target.value })} placeholder="Thêm chủ đề" /></label><textarea className="wm-compose-body" autoFocus value={compose.text} onChange={event => setCompose({ ...compose, text: event.target.value })} placeholder="Soạn nội dung thư…" />{compose.files.length > 0 && <div className="wm-compose-files">{compose.files.map((file,index) => <span key={`${file.name}-${index}`}><Paperclip size={14} />{file.name}<small>{formatBytes(file.size)}</small><button type="button" aria-label={`Bỏ tệp ${file.name}`} onClick={() => setCompose(current => current ? { ...current, files: current.files.filter((_,position) => position !== index) } : null)}><X size={14} /></button></span>)}</div>}<div className="wm-compose-footer"><button className="wm-send-btn" disabled={busy}><Send size={16} />{busy ? 'Đang gửi…' : 'Gửi'}</button><input ref={fileInput} className="wm-file-input" type="file" multiple onChange={addFiles} /><button type="button" className="wm-icon-btn" aria-label="Đính kèm tệp" title="Đính kèm tệp (tối đa 5 tệp, 20 MB)" onClick={() => fileInput.current?.click()}><Paperclip size={18} /></button><span>{account}</span></div></form></div>}
     <div className="wm-mobile-compose"><button onClick={() => { setCompose(newCompose()); setShowCc(false); }}><PenLine size={19} /></button></div>
   </div>;
