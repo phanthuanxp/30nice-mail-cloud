@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS tenant_members (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
+  password_hash TEXT,
   role TEXT NOT NULL CHECK (role IN ('tenant_admin','mailbox_user')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
