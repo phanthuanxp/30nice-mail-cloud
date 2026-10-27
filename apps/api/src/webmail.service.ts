@@ -292,6 +292,7 @@ export class WebmailService {
       const rendered = await renderer.sendMail(messageOptions);
       if (!Buffer.isBuffer(rendered.message)) throw new Error('MIME message was not buffered');
       const sent = await transport.sendMail({ raw: rendered.message, envelope: { from: session.email, to: [...to, ...cc] } });
+      if (!sent.accepted.length) throw new BadRequestException('Máy chủ không chấp nhận người nhận. Kiểm tra lại địa chỉ rồi thử lại.');
       let savedToSent = false;
       try {
         const client = this.makeClient(session.email, session.password);
@@ -303,8 +304,12 @@ export class WebmailService {
         } finally { await client.logout().catch(() => undefined); }
       } catch { savedToSent = false; }
       const draftRemoved = input.draftId ? await this.removeDraftCopies(session.email, session.password, input.draftId, input.replaceUid) : true;
-      return { accepted: sent.accepted.length, messageId: rendered.messageId || sent.messageId, savedToSent, draftRemoved };
-    } catch { throw new BadRequestException('Không gửi được thư. Vui lòng kiểm tra người nhận hoặc thử lại sau.'); }
+      const addresses = (values: typeof sent.accepted) => values.map(value => String(value)).filter(Boolean);
+      return { accepted: addresses(sent.accepted), rejected: addresses(sent.rejected), messageId: rendered.messageId || sent.messageId, savedToSent, draftRemoved };
+    } catch (reason) {
+      if (reason instanceof BadRequestException) throw reason;
+      throw new BadRequestException('Không gửi được thư. Vui lòng kiểm tra kết nối hoặc thử lại sau.');
+    }
     finally { renderer.close(); transport.close(); }
   }
 
