@@ -1,8 +1,9 @@
-import {Body,Controller,ForbiddenException,Get,Headers,Module,Param,Post,Put,Req} from '@nestjs/common';
+import {Body,Controller,ForbiddenException,Get,Headers,Module,Param,Post,Put,Req,Res,Query} from '@nestjs/common';
 import {MailCloudService} from './mail-cloud.service';
 import {DatabaseService} from './database.service';
 import {MailcowService} from './mailcow.service';
 import {AuthService} from './auth.service';
+import {WebmailService} from './webmail.service';
 
 @Controller()
 class ApiController {
@@ -29,4 +30,19 @@ class ApiController {
   @Put('api/v1/tenants/:tenantId/mailboxes/:mailboxId') async updateMailbox(@Param('tenantId') tenantId: string, @Param('mailboxId') mailboxId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {quotaGb?: number; status?: 'active'|'disabled'}, @Headers('authorization') authorization?:string){const session=this.requireWriteAccess(authorization);this.assertSessionTenant(session,tenantId);return this.service.updateMailbox(await this.service.assertTenant(tenantId,session.role==='super_admin'?scope:session.tenantId), mailboxId, body);}
 }
 
-@Module({controllers:[ApiController],providers:[MailCloudService,DatabaseService,MailcowService,AuthService]}) export class AppModule {}
+@Controller('api/v1/webmail')
+class WebmailController {
+  constructor(private readonly webmail:WebmailService){}
+  private token(req:{headers:Record<string,string|undefined>}){const cookie=req.headers.cookie||'';const match=cookie.match(/(?:^|;\s*)30nice_webmail=([^;]+)/);return match?decodeURIComponent(match[1]):undefined;}
+  @Post('login') async login(@Body() body:{email?:string;password?:string},@Req() req:{ip?:string;headers:Record<string,string|undefined>},@Res({passthrough:true}) res:any){const result=await this.webmail.login(body.email||'',body.password||'',req.headers['x-real-ip']||req.ip||'unknown');res.cookie('30nice_webmail',result.token,{httpOnly:true,secure:true,sameSite:'strict',path:'/api/api/v1/webmail',maxAge:8*60*60*1000});return {email:result.email,expiresAt:result.expiresAt};}
+  @Post('logout') logout(@Req() req:any,@Res({passthrough:true}) res:any){this.webmail.logout(this.token(req));res.clearCookie('30nice_webmail',{httpOnly:true,secure:true,sameSite:'strict',path:'/api/api/v1/webmail'});return {ok:true};}
+  @Get('session') session(@Req() req:any){return this.webmail.profile(this.token(req));}
+  @Get('folders') folders(@Req() req:any){return this.webmail.folders(this.token(req));}
+  @Get('messages') messages(@Req() req:any,@Query('folder') folder='INBOX',@Query('q') query=''){return this.webmail.messages(this.token(req),folder,query);}
+  @Get('messages/:uid') read(@Req() req:any,@Param('uid') uid:string,@Query('folder') folder='INBOX'){return this.webmail.read(this.token(req),folder,Number(uid));}
+  @Post('messages/:uid/flags') flag(@Req() req:any,@Param('uid') uid:string,@Body() body:{folder?:string;flag?:'seen'|'unseen'|'flagged'|'unflagged'}){if(!body.flag||!['seen','unseen','flagged','unflagged'].includes(body.flag))throw new ForbiddenException('Trạng thái thư không hợp lệ');return this.webmail.setFlag(this.token(req),body.folder||'INBOX',Number(uid),body.flag);}
+  @Post('messages/:uid/trash') trash(@Req() req:any,@Param('uid') uid:string,@Body() body:{folder?:string}){return this.webmail.moveToTrash(this.token(req),body.folder||'INBOX',Number(uid));}
+  @Post('send') send(@Req() req:any,@Body() body:{to?:string;cc?:string;subject?:string;text?:string}){return this.webmail.send(this.token(req),body);}
+}
+
+@Module({controllers:[ApiController,WebmailController],providers:[MailCloudService,DatabaseService,MailcowService,AuthService,WebmailService]}) export class AppModule {}
