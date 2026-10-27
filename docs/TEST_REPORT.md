@@ -27,6 +27,7 @@ The original local-first phase did not change DNS/MX or handle production secret
 - GitHub/VPS deployment — PASS at commit `be8098e`.
 - Mailcow create/update mailbox calls are server-side and use bounded request timeouts; destructive delivery and Gmail/Outlook deliverability tests remain unverified.
 - Mailcow dry-run smoke test — PASS: `MAIL_ADAPTER_MODE=dry-run` returned dry-run success for domain and mailbox operations without requiring an API URL or key.
+- `npm run test:mailcow` — PASS: mocked production adapter verified health, add-domain, add-mailbox and edit-mailbox endpoints; the server-only API key was present only in the outbound server request.
 
 ## Dependency security audit (2026-10-27)
 

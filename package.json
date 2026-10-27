@@ -10,6 +10,7 @@
     "dev:api": "npm run start:dev --workspace=@30nice/api",
     "build": "npm run build --workspace=@30nice/portal",
     "build:api": "npm run build --workspace=@30nice/api",
+    "test:mailcow": "npm run build:api && node scripts/smoke-mailcow-adapter.cjs",
     "typecheck": "npm run typecheck --workspace=@30nice/portal && npm run typecheck --workspace=@30nice/api",
     "test": "npm run typecheck"
   }
