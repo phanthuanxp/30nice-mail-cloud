@@ -127,7 +127,7 @@ export class WebmailService {
         },
       },
       allowedSchemes: ['http', 'https', 'mailto', 'cid'],
-      allowedSchemesByTag: { img: ['cid'] },
+      allowedSchemesByTag: { img: ['cid', 'http', 'https'] },
       allowProtocolRelative: false,
       disallowedTagsMode: 'discard',
       transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer', target: '_blank' }) },
@@ -193,7 +193,7 @@ export class WebmailService {
     });
   }
 
-  async read(token: string | undefined, folder: string, uid: number) {
+  async read(token: string | undefined, folder: string, uid: number, externalImages = false) {
     this.assertUid(uid);
     return this.withClient(token, async client => {
       const mailbox = await this.resolveFolder(client, folder);
@@ -204,7 +204,7 @@ export class WebmailService {
         if ((overview.size || 0) > 15 * 1024 * 1024) throw new BadRequestException('Thư lớn hơn 15 MB. Vui lòng mở thư bằng ứng dụng email hỗ trợ tệp lớn.');
         const message = await client.fetchOne(String(uid), { source: true, envelope: true, flags: true }, { uid: true });
         if (!message || !message.source) throw new BadRequestException('Không tìm thấy thư');
-        const parsed = await simpleParser(message.source);
+        const parsed = await simpleParser(message.source, { keepCidLinks: true });
         if (!message.flags?.has('\\Seen')) await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
         const safeHtml = this.sanitizeMessageHtml(typeof parsed.html === 'string' ? parsed.html : '');
         const inlineContent = new Map<string, number>();
@@ -212,11 +212,17 @@ export class WebmailService {
           const contentId = String(attachment.contentId || '').replace(/^<|>$/g, '').trim().toLowerCase();
           if (contentId) inlineContent.set(contentId, index);
         });
-        const html = safeHtml.replace(/\bsrc=(['"])cid:([^'"]+)\1/gi, (match, quote: string, rawContentId: string) => {
+        let hasRemoteImages = false;
+        const htmlWithImages = safeHtml.replace(/\bsrc=(['"])cid:([^'"]+)\1/gi, (match, quote: string, rawContentId: string) => {
           let contentId = rawContentId;
           try { contentId = decodeURIComponent(contentId); } catch { /* Keep the original content ID. */ }
           const index = inlineContent.get(contentId.replace(/&amp;/gi, '&').replace(/^<|>$/g, '').trim().toLowerCase());
           return index === undefined ? '' : `src="/api/api/v1/webmail/messages/${uid}/attachments/${index}?folder=${encodeURIComponent(folder)}&inline=1"`;
+        });
+        const html = htmlWithImages.replace(/<img\b[^>]*>/gi, tag => {
+          if (!/\bsrc\s*=\s*(['"])https?:\/\//i.test(tag)) return tag;
+          hasRemoteImages = true;
+          return externalImages ? tag : tag.replace(/\s+src\s*=\s*(['"])https?:\/\/[^'"]*\1/i, '');
         });
         const fromValues = parsed.from?.value || [];
         const toHeader = Array.isArray(parsed.to) ? parsed.to.flatMap(value => value.value) : parsed.to?.value || [];
@@ -227,7 +233,7 @@ export class WebmailService {
         const cc = ccAddresses.map(value => value.address || value.name).join(', ');
         const draftIdHeader = parsed.headers.get('x-30nice-draft-id');
         const draftId = typeof draftIdHeader === 'string' ? draftIdHeader : undefined;
-        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, draftId, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, draft: message.flags?.has('\\Draft') || false, size: message.source.length, text: parsed.text || '', html, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
+        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, draftId, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, draft: message.flags?.has('\\Draft') || false, size: message.source.length, text: parsed.text || '', html, hasRemoteImages, externalImagesVisible: externalImages, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
       } finally { lock.release(); }
     });
   }
