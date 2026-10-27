@@ -1,16 +1,16 @@
 'use client';
 
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArrowLeft, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File, Inbox, LogOut, Mail, MailOpen, Menu, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Trash2, X } from 'lucide-react';
+import { Archive, ArrowLeft, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File as FileIcon, Inbox, LogOut, Mail, MailOpen, Menu, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Trash2, X } from 'lucide-react';
 
 type Folder = { path: string; name: string; specialUse: string | null; messages: number; unread: number };
 type Address = { address: string; name: string };
-type MailItem = { uid: number; subject: string; from: Address[]; to: Address[]; date: string | null; seen: boolean; flagged: boolean; size: number };
-type Message = MailItem & { folder: string; cc: string; ccAddresses: Address[]; text: string; html: string; attachments: { index: number; filename: string; contentType: string; size: number }[] };
-type Compose = { to: string; cc: string; subject: string; text: string; files: File[] };
+type MailItem = { uid: number; subject: string; from: Address[]; to: Address[]; date: string | null; seen: boolean; flagged: boolean; draft: boolean; size: number };
+type Message = MailItem & { folder: string; cc: string; ccAddresses: Address[]; draftId?: string; text: string; html: string; attachments: { index: number; filename: string; contentType: string; size: number }[] };
+type Compose = { draftId: string; replaceUid?: number; to: string; cc: string; subject: string; text: string; files: File[] };
 
 const API = '/api/api/v1/webmail';
-const FOLDER_ICONS: Record<string, typeof Inbox> = { '\\Inbox': Inbox, '\\Sent': Send, '\\Drafts': File, '\\Trash': Trash2, '\\Junk': ShieldCheck, '\\Archive': Archive, '\\Flagged': Star };
+const FOLDER_ICONS: Record<string, typeof Inbox> = { '\\Inbox': Inbox, '\\Sent': Send, '\\Drafts': FileIcon, '\\Trash': Trash2, '\\Junk': ShieldCheck, '\\Archive': Archive, '\\Flagged': Star };
 
 function folderLabel(folder: Folder) {
   const labels: Record<string, string> = { '\\Inbox': 'Hộp thư đến', '\\Sent': 'Đã gửi', '\\Drafts': 'Thư nháp', '\\Trash': 'Thùng rác', '\\Junk': 'Thư rác', '\\Archive': 'Lưu trữ', '\\Flagged': 'Có gắn sao' };
@@ -40,9 +40,12 @@ export default function WebmailClient() {
   const [total, setTotal] = useState(0);
   const [selectedUids, setSelectedUids] = useState<Set<number>>(new Set());
   const [compose, setCompose] = useState<Compose | null>(null);
+  const [draftStatus, setDraftStatus] = useState('');
   const [showCc, setShowCc] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const draftQueue = useRef<Promise<void>>(Promise.resolve());
+  const draftTimer = useRef<number | null>(null);
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
     const multipart = typeof FormData !== 'undefined' && init?.body instanceof FormData;
@@ -54,6 +57,27 @@ export default function WebmailClient() {
     }
     return response.status === 204 ? null : response.json();
   }, []);
+
+  const saveDraft = useCallback(async (snapshot: Compose) => {
+    const save = async () => {
+      const body = new FormData();
+      body.set('draftId', snapshot.draftId); body.set('replaceUid', String(snapshot.replaceUid || ''));
+      body.set('to', snapshot.to); body.set('cc', snapshot.cc); body.set('subject', snapshot.subject); body.set('text', snapshot.text);
+      snapshot.files.forEach(file => body.append('attachments', file, file.name));
+      await request('/drafts', { method: 'POST', body });
+    };
+    setDraftStatus('Đang lưu nháp…');
+    const queued = draftQueue.current.then(save);
+    draftQueue.current = queued.then(() => undefined, () => undefined);
+    try { await queued; setDraftStatus('Đã lưu nháp'); return true; }
+    catch (reason) { setDraftStatus('Chưa lưu được nháp'); setError(reason instanceof Error ? reason.message : 'Không thể lưu thư nháp.'); return false; }
+  }, [request]);
+
+  useEffect(() => {
+    if (!compose || !(compose.to || compose.cc || compose.subject || compose.text || compose.files.length)) { setDraftStatus(''); return; }
+    draftTimer.current = window.setTimeout(() => { void saveDraft(compose); }, 1000);
+    return () => { if (draftTimer.current !== null) window.clearTimeout(draftTimer.current); };
+  }, [compose, saveDraft]);
 
   const loadFolders = useCallback(async () => {
     const data = await request('/folders') as Folder[];
@@ -103,7 +127,38 @@ export default function WebmailClient() {
     try { await request('/logout', { method: 'POST' }); } finally { setAuthenticated(false); setAccount(''); setItems([]); setSelected(null); setFolders([]); setNotice(''); }
   }
 
+  async function resumeDraft(item: MailItem) {
+    setBusy(true); setError('');
+    try {
+      const data = await request(`/messages/${item.uid}?folder=${encodeURIComponent(folder)}`) as Message;
+      const files = await Promise.all(data.attachments.map(async file => {
+        const response = await fetch(`${API}/messages/${item.uid}/attachments/${file.index}?folder=${encodeURIComponent(folder)}`, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error('Không tải được tệp đính kèm trong thư nháp.');
+        return new File([await response.blob()], file.filename, { type: file.contentType });
+      }));
+      const cc = data.ccAddresses.map(value => value.address).filter(Boolean).join(', ');
+      setCompose({ draftId: data.draftId || crypto.randomUUID(), replaceUid: item.uid, to: data.to.map(value => value.address).filter(Boolean).join(', '), cc, subject: data.subject === '(Không có tiêu đề)' ? '' : data.subject, text: data.text, files });
+      setShowCc(Boolean(cc)); setSelected(null); setMobileNav(false);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không mở được thư nháp.'); }
+    finally { setBusy(false); }
+  }
+
+  async function closeComposer() {
+    if (!compose || busy) return;
+    if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
+    const hasContent = Boolean(compose.to || compose.cc || compose.subject || compose.text || compose.files.length);
+    if (hasContent) {
+      if (!await saveDraft(compose)) return;
+      setNotice('Đã lưu thư nháp.');
+    } else if (compose.replaceUid) {
+      try { await request('/drafts/discard', { method: 'POST', body: JSON.stringify({ draftId: compose.draftId, replaceUid: compose.replaceUid }) }); }
+      catch (reason) { setError(reason instanceof Error ? reason.message : 'Không xóa được thư nháp.'); return; }
+    }
+    setCompose(null); setShowCc(false);
+  }
+
   async function openMessage(item: MailItem) {
+    if (item.draft) { await resumeDraft(item); return; }
     setBusy(true); setError('');
     try {
       const data = await request(`/messages/${item.uid}?folder=${encodeURIComponent(folder)}`) as Message;
@@ -165,12 +220,15 @@ export default function WebmailClient() {
   async function sendMessage(event: FormEvent) {
     event.preventDefault(); if (!compose) return; setBusy(true); setError('');
     try {
+      if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
+      await draftQueue.current;
       const body = new FormData();
+      body.set('draftId', compose.draftId); body.set('replaceUid', String(compose.replaceUid || ''));
       body.set('to', compose.to); body.set('cc', compose.cc); body.set('subject', compose.subject); body.set('text', compose.text);
       compose.files.forEach(file => body.append('attachments', file, file.name));
-      const result = await request('/send', { method: 'POST', body }) as { savedToSent: boolean };
+      const result = await request('/send', { method: 'POST', body }) as { savedToSent: boolean; draftRemoved: boolean };
       setCompose(null); setShowCc(false);
-      setNotice(result.savedToSent ? 'Đã gửi thư và lưu bản sao trong Đã gửi.' : 'Thư đã được máy chủ gửi đi, nhưng chưa lưu được bản sao vào Đã gửi. Không cần gửi lại.');
+      setNotice(!result.draftRemoved ? 'Thư đã gửi; bản nháp cũ chưa được dọn khỏi thư mục Thư nháp. Không cần gửi lại.' : result.savedToSent ? 'Đã gửi thư và lưu bản sao trong Đã gửi.' : 'Thư đã được máy chủ gửi đi, nhưng chưa lưu được bản sao vào Đã gửi. Không cần gửi lại.');
       const sent = folders.find(item => item.specialUse === '\\Sent'); if (sent) { setPage(1); setFolder(sent.path); setQuery(''); setSearchInput(''); setListFilter('all'); setSelected(null); await loadMessages(sent.path, '', 1, 'all'); try { await loadFolders(); } catch { setNotice('Đã gửi thư. Không tải lại được danh sách thư mục; hãy bấm Làm mới.'); } }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không gửi được thư.'); }
     finally { setBusy(false); }
@@ -193,9 +251,11 @@ export default function WebmailClient() {
     const toAddresses = [...new Set([sender?.address || '', ...(replyAll ? message.to.map(value => value.address) : [])].filter(value => value && value.toLowerCase() !== own))];
     const ccAddresses = replyAll ? [...new Set(message.ccAddresses.map(value => value.address).filter((value): value is string => Boolean(value) && value.toLowerCase() !== own && !toAddresses.includes(value)))] : [];
     setShowCc(ccAddresses.length > 0);
-    setCompose({ to: toAddresses.join(', '), cc: ccAddresses.join(', '), subject: /^(re|aw):/i.test(message.subject) ? message.subject : `Re: ${message.subject}`, text: `\n\n────────── Thư gốc ──────────\nTừ: ${person(sender)}\n${message.text.slice(0, 2000)}`, files: [] });
+    setCompose({ draftId: crypto.randomUUID(), to: toAddresses.join(', '), cc: ccAddresses.join(', '), subject: /^(re|aw):/i.test(message.subject) ? message.subject : `Re: ${message.subject}`, text: `\n\n────────── Thư gốc ──────────\nTừ: ${person(sender)}\n${message.text.slice(0, 2000)}`, files: [] });
     setSelected(null);
   }
+
+  function newCompose(): Compose { return { draftId: crypto.randomUUID(), to: '', cc: '', subject: '', text: '', files: [] }; }
 
   if (!authenticated) return <div className="wm-login-page"><div className="wm-login-card"><div className="wm-brand-mark"><Mail size={25} /></div><div className="wm-login-brand">30NICE <span>Mail</span></div><h1>Chào mừng bạn trở lại</h1><p>Đăng nhập bằng địa chỉ email doanh nghiệp của bạn.</p>{error && <div className="wm-alert">{error}</div>}<form onSubmit={signIn}><label>Địa chỉ email<input type="email" autoComplete="username" required placeholder="ban@congty.vn" value={email} onChange={event => setEmail(event.target.value)} /></label><label>Mật khẩu<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} /></label><button className="wm-button-primary wm-login-submit" disabled={busy}>{busy ? 'Đang đăng nhập…' : 'Đăng nhập'}</button></form><div className="wm-login-help"><ShieldCheck size={15} /> Phiên đăng nhập được bảo vệ</div><small>30NICE Mail · Email doanh nghiệp</small></div></div>;
 
@@ -208,7 +268,7 @@ export default function WebmailClient() {
     </header>
     <div className="wm-layout">
       <aside className={`wm-sidebar ${mobileNav ? 'wm-sidebar-open' : ''}`}>
-        <button className="wm-compose-btn" onClick={() => { setCompose({ to: '', cc: '', subject: '', text: '', files: [] }); setMobileNav(false); }}><PenLine size={19} /> Soạn thư</button>
+        <button className="wm-compose-btn" onClick={() => { setCompose(newCompose()); setShowCc(false); setMobileNav(false); }}><PenLine size={19} /> Soạn thư</button>
         <nav className="wm-folder-nav" aria-label="Thư mục">
           {folders.map(item => { const Icon = FOLDER_ICONS[item.specialUse || ''] || (item.path.toUpperCase() === 'INBOX' ? Inbox : Mail); return <button key={item.path} className={`wm-folder-link ${folder === item.path && !selected ? 'active' : ''}`} onClick={() => { setPage(1); setFolder(item.path); setSelected(null); setMobileNav(false); }}><Icon size={18} /><span>{folderLabel(item)}</span>{item.unread > 0 && <b>{item.unread}</b>}</button>; })}
         </nav>
@@ -225,8 +285,8 @@ export default function WebmailClient() {
         </section>
       </main>
     </div>
-    {compose && <div className="wm-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setCompose(null); }}><form className="wm-compose-window" onSubmit={sendMessage}><div className="wm-compose-title"><b>Thư mới</b><button type="button" aria-label="Đóng" onClick={() => setCompose(null)}><X size={18} /></button></div><label className="wm-compose-field"><span>Đến</span><input required value={compose.to} onChange={event => setCompose({ ...compose, to: event.target.value })} placeholder="Địa chỉ email, cách nhau bằng dấu phẩy" /><button type="button" onClick={() => setShowCc(!showCc)}>CC</button></label>{showCc && <label className="wm-compose-field"><span>CC</span><input value={compose.cc} onChange={event => setCompose({ ...compose, cc: event.target.value })} placeholder="Thêm người nhận CC" /></label>}<label className="wm-compose-field"><span>Chủ đề</span><input value={compose.subject} onChange={event => setCompose({ ...compose, subject: event.target.value })} placeholder="Thêm chủ đề" /></label><textarea className="wm-compose-body" autoFocus value={compose.text} onChange={event => setCompose({ ...compose, text: event.target.value })} placeholder="Soạn nội dung thư…" />{compose.files.length > 0 && <div className="wm-compose-files">{compose.files.map((file,index) => <span key={`${file.name}-${index}`}><Paperclip size={14} />{file.name}<small>{formatBytes(file.size)}</small><button type="button" aria-label={`Bỏ tệp ${file.name}`} onClick={() => setCompose(current => current ? { ...current, files: current.files.filter((_,position) => position !== index) } : null)}><X size={14} /></button></span>)}</div>}<div className="wm-compose-footer"><button className="wm-send-btn" disabled={busy}><Send size={16} />{busy ? 'Đang gửi…' : 'Gửi'}</button><input ref={fileInput} className="wm-file-input" type="file" multiple onChange={addFiles} /><button type="button" className="wm-icon-btn" aria-label="Đính kèm tệp" title="Đính kèm tệp (tối đa 5 tệp, 20 MB)" onClick={() => fileInput.current?.click()}><Paperclip size={18} /></button><span>{account}</span></div></form></div>}
-    <div className="wm-mobile-compose"><button onClick={() => setCompose({ to: '', cc: '', subject: '', text: '', files: [] })}><PenLine size={19} /></button></div>
+    {compose && <div className="wm-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) void closeComposer(); }}><form className="wm-compose-window" onSubmit={sendMessage}><div className="wm-compose-title"><b>Thư mới</b><span className="wm-draft-status" role="status">{draftStatus}</span><button type="button" aria-label="Đóng" onClick={() => void closeComposer()}><X size={18} /></button></div><label className="wm-compose-field"><span>Đến</span><input value={compose.to} onChange={event => setCompose({ ...compose, to: event.target.value })} placeholder="Địa chỉ email, cách nhau bằng dấu phẩy" /><button type="button" onClick={() => setShowCc(!showCc)}>CC</button></label>{showCc && <label className="wm-compose-field"><span>CC</span><input value={compose.cc} onChange={event => setCompose({ ...compose, cc: event.target.value })} placeholder="Thêm người nhận CC" /></label>}<label className="wm-compose-field"><span>Chủ đề</span><input value={compose.subject} onChange={event => setCompose({ ...compose, subject: event.target.value })} placeholder="Thêm chủ đề" /></label><textarea className="wm-compose-body" autoFocus value={compose.text} onChange={event => setCompose({ ...compose, text: event.target.value })} placeholder="Soạn nội dung thư…" />{compose.files.length > 0 && <div className="wm-compose-files">{compose.files.map((file,index) => <span key={`${file.name}-${index}`}><Paperclip size={14} />{file.name}<small>{formatBytes(file.size)}</small><button type="button" aria-label={`Bỏ tệp ${file.name}`} onClick={() => setCompose(current => current ? { ...current, files: current.files.filter((_,position) => position !== index) } : null)}><X size={14} /></button></span>)}</div>}<div className="wm-compose-footer"><button className="wm-send-btn" disabled={busy}><Send size={16} />{busy ? 'Đang gửi…' : 'Gửi'}</button><input ref={fileInput} className="wm-file-input" type="file" multiple onChange={addFiles} /><button type="button" className="wm-icon-btn" aria-label="Đính kèm tệp" title="Đính kèm tệp (tối đa 5 tệp, 20 MB)" onClick={() => fileInput.current?.click()}><Paperclip size={18} /></button><span>{account}</span></div></form></div>}
+    <div className="wm-mobile-compose"><button onClick={() => { setCompose(newCompose()); setShowCc(false); }}><PenLine size={19} /></button></div>
   </div>;
 }
 
