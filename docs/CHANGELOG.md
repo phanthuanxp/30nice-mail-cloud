@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-28 — Framework security and webmail runtime
+
+- Upgrade NestJS to 12.3.2, Next.js to 16.4.3 and TypeScript to 6.0.3; move the mail-host rewrite from the deprecated middleware entry point to Next.js `proxy.ts`.
+- Update the TypeScript configuration for the new compiler and Next.js generated route types.
+- Confirm the production dependency audit and full dependency audit both report zero vulnerabilities in the staging checkout.
+- Confirm API/portal builds, workspace typechecks and the Mailcow adapter smoke test pass in staging.
+
 ## 2026-10-28 — Mailbox provisioning reliability
 
 - Convert mailbox quotas from the control plane's GB unit to Mailcow's API unit; reject fractional or out-of-range quota values.
