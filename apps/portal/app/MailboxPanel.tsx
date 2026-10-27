@@ -1,6 +1,115 @@
 'use client';
-import {useEffect,useState} from 'react';
-import {RefreshCw,UserPlus} from 'lucide-react';
+
+import { useCallback, useEffect, useState } from 'react';
+import { Check, LockKeyhole, RefreshCw, UnlockKeyhole, UserPlus } from 'lucide-react';
 import './mailbox-panel.css';
-type Tenant={id:string;name:string}; type Mailbox={id:string;address:string;quotaGb:number;status:string};
-export default function MailboxPanel(){const [tenants,setTenants]=useState<Tenant[]>([]);const [tenant,setTenant]=useState('');const [items,setItems]=useState<Mailbox[]>([]);const [address,setAddress]=useState('');const [quotaGb,setQuotaGb]=useState('5');const [password,setPassword]=useState('');const [message,setMessage]=useState('');const [loading,setLoading]=useState(false);const load=()=>{if(!tenant)return;fetch(`/api/api/v1/tenants/${tenant}/mailboxes`).then(r=>r.json()).then(setItems).catch(()=>setItems([]));};useEffect(()=>{fetch('/api/api/v1/tenants').then(r=>r.json()).then((rows)=>{setTenants(rows);if(rows[0])setTenant(rows[0].id);});},[]);useEffect(load,[tenant]);const create=async()=>{setLoading(true);setMessage('');const response=await fetch(`/api/api/v1/tenants/${tenant}/mailboxes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address,quotaGb:Number(quotaGb),password:password||undefined})});const result=await response.json();setLoading(false);if(!response.ok){setMessage(result.message||'Không thể tạo hộp thư');return;}setMessage(result.temporaryPassword?`Đã tạo hộp thư. Mật khẩu tạm thời: ${result.temporaryPassword}`:'Đã tạo hộp thư thành công');setAddress('');setPassword('');load();};return <div className="mailboxPanel"><div className="mailboxToolbar"><select value={tenant} onChange={e=>setTenant(e.target.value)}><option value="">Chọn khách hàng</option>{tenants.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select><button className="ghost" onClick={load}><RefreshCw size={14}/> Làm mới</button></div><div className="mailboxCreate"><label>Địa chỉ hộp thư<input value={address} onChange={e=>setAddress(e.target.value)} placeholder="user@congty.vn"/></label><label>Dung lượng (GB)<input type="number" min="1" max="1000" value={quotaGb} onChange={e=>setQuotaGb(e.target.value)}/></label><label>Mật khẩu<input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Để trống để tự tạo"/></label><button className="primary" disabled={loading||!tenant||!address||Number(quotaGb)<1} onClick={create}>{loading?<RefreshCw className="spin" size={16}/>:<UserPlus size={16}/>} Tạo hộp thư</button></div>{message&&<p className="mailboxMessage">{message}</p>}<div className="mailboxList">{items.map(item=><div className="mailboxRow" key={item.id}><b>{item.address}</b><span>{item.quotaGb} GB</span><em>{item.status==='active'?'Đang hoạt động':'Đã khóa'}</em></div>)}{!items.length&&<p className="emptyText">Chưa có hộp thư.</p>}</div></div>}
+
+type Tenant = { id: string; name: string };
+type Mailbox = { id: string; address: string; quotaGb: number; status: 'active' | 'disabled' };
+
+export default function MailboxPanel() {
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenant, setTenant] = useState('');
+  const [items, setItems] = useState<Mailbox[]>([]);
+  const [quotaDrafts, setQuotaDrafts] = useState<Record<string, string>>({});
+  const [address, setAddress] = useState('');
+  const [quotaGb, setQuotaGb] = useState('5');
+  const [password, setPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [messageIsError, setMessageIsError] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [savingId, setSavingId] = useState('');
+
+  const load = useCallback(async () => {
+    if (!tenant) { setItems([]); return; }
+    try {
+      const response = await fetch(`/api/api/v1/tenants/${tenant}/mailboxes`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Không tải được danh sách hộp thư.');
+      setItems(result);
+      setQuotaDrafts(Object.fromEntries(result.map((item: Mailbox) => [item.id, String(item.quotaGb)])));
+    } catch (reason) {
+      setItems([]);
+      setMessage(reason instanceof Error ? reason.message : 'Không tải được danh sách hộp thư.');
+      setMessageIsError(true);
+    }
+  }, [tenant]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/api/v1/tenants').then(async response => {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Không tải được danh sách khách hàng.');
+      if (!cancelled) { setTenants(result); if (result[0]) setTenant(result[0].id); }
+    }).catch(reason => {
+      if (!cancelled) { setMessage(reason instanceof Error ? reason.message : 'Không tải được danh sách khách hàng.'); setMessageIsError(true); }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function create() {
+    setLoading(true); setMessage(''); setMessageIsError(false);
+    try {
+      const response = await fetch(`/api/api/v1/tenants/${tenant}/mailboxes`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: address.trim(), quotaGb: Number(quotaGb), password: password || undefined }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Không thể tạo hộp thư.');
+      setMessage(result.temporaryPassword ? `Đã tạo hộp thư. Mật khẩu tạm thời: ${result.temporaryPassword}` : 'Đã tạo hộp thư thành công.');
+      setAddress(''); setPassword(''); await load();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : 'Không thể tạo hộp thư.'); setMessageIsError(true);
+    } finally { setLoading(false); }
+  }
+
+  async function update(item: Mailbox, changes: Partial<Pick<Mailbox, 'quotaGb' | 'status'>>) {
+    setSavingId(item.id); setMessage(''); setMessageIsError(false);
+    try {
+      const response = await fetch(`/api/api/v1/tenants/${tenant}/mailboxes/${item.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Không thể cập nhật hộp thư.');
+      setMessage(changes.status ? (changes.status === 'active' ? 'Đã mở lại hộp thư.' : 'Đã tạm khóa hộp thư.') : 'Đã cập nhật dung lượng.');
+      await load();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : 'Không thể cập nhật hộp thư.'); setMessageIsError(true);
+    } finally { setSavingId(''); }
+  }
+
+  return <div className="mailboxPanel">
+    <div className="mailboxToolbar">
+      <select aria-label="Chọn khách hàng" value={tenant} onChange={event => setTenant(event.target.value)}>
+        <option value="">Chọn khách hàng</option>{tenants.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      <button className="ghost" onClick={() => void load()} disabled={loading || Boolean(savingId)}><RefreshCw size={14} /> Làm mới</button>
+    </div>
+    <div className="mailboxCreate">
+      <label>Địa chỉ hộp thư<input type="email" value={address} onChange={event => setAddress(event.target.value)} placeholder="user@congty.vn" /></label>
+      <label>Dung lượng (GB)<input type="number" min="1" max="1000" step="1" value={quotaGb} onChange={event => setQuotaGb(event.target.value)} /></label>
+      <label>Mật khẩu<input type="password" autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Để trống để tự tạo" /></label>
+      <button className="primary" disabled={loading || !tenant || !address.trim() || !Number.isInteger(Number(quotaGb)) || Number(quotaGb) < 1 || Number(quotaGb) > 1000} onClick={() => void create()}>{loading ? <RefreshCw className="spin" size={16} /> : <UserPlus size={16} />} Tạo hộp thư</button>
+    </div>
+    {message && <p className={`mailboxMessage ${messageIsError ? 'error' : ''}`} role={messageIsError ? 'alert' : 'status'}>{message}</p>}
+    <div className="mailboxList">
+      {items.map(item => {
+        const quota = Number(quotaDrafts[item.id] ?? item.quotaGb);
+        const validQuota = Number.isInteger(quota) && quota >= 1 && quota <= 1000;
+        const quotaChanged = validQuota && quota !== item.quotaGb;
+        return <div className="mailboxRow" key={item.id}>
+          <b>{item.address}</b>
+          <label className="mailboxQuota">Dung lượng<input aria-label={`Dung lượng của ${item.address} (GB)`} type="number" min="1" max="1000" step="1" value={quotaDrafts[item.id] ?? item.quotaGb} onChange={event => setQuotaDrafts(current => ({ ...current, [item.id]: event.target.value }))} /> GB</label>
+          {quotaChanged && <button className="mailboxAction save" disabled={savingId === item.id} onClick={() => void update(item, { quotaGb: quota })}><Check size={14} /> Lưu</button>}
+          <em className={item.status === 'active' ? 'active' : 'disabled'}>{item.status === 'active' ? 'Đang hoạt động' : 'Đã khóa'}</em>
+          <button className="mailboxAction" disabled={savingId === item.id} onClick={() => void update(item, { status: item.status === 'active' ? 'disabled' : 'active' })}>
+            {item.status === 'active' ? <><LockKeyhole size={14} /> Tạm khóa</> : <><UnlockKeyhole size={14} /> Mở lại</>}
+          </button>
+        </div>;
+      })}
+      {!items.length && <p className="emptyText">{tenant ? 'Chưa có hộp thư trong khách hàng này.' : 'Chọn khách hàng để xem hộp thư.'}</p>}
+    </div>
+  </div>;
+}
