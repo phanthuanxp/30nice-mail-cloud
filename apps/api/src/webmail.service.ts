@@ -16,7 +16,7 @@ export class WebmailService {
   private readonly smtpHost = process.env.MAILCOW_SMTP_HOST || this.host;
 
   private makeClient(email: string, password: string) {
-    const client = new ImapFlow({ host: this.host, port: 993, secure: true, auth: { user: email, pass: password }, logger: false, clientInfo: { name: '30NICE Mail', version: '1.0' } });
+    const client = new ImapFlow({ host: this.host, port: 993, secure: true, auth: { user: email, pass: password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000, logger: false, clientInfo: { name: '30NICE Mail', version: '1.0' } });
     client.on('error', () => undefined);
     return client;
   }
@@ -127,8 +127,9 @@ export class WebmailService {
         const from = fromValues.map(value => ({ address: value.address || '', name: value.name || '' }));
         const to = toHeader.map(value => ({ address: value.address || '', name: value.name || '' }));
         const ccValues = Array.isArray(parsed.cc) ? parsed.cc.flatMap(value => value.value) : parsed.cc?.value || [];
-        const cc = ccValues.map(value => value.address || value.name || '').join(', ');
-        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, size: message.source.length, text: parsed.text || '', html: safeHtml, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
+        const ccAddresses = ccValues.map(value => ({ address: value.address || '', name: value.name || '' })).filter(value => value.address || value.name);
+        const cc = ccAddresses.map(value => value.address || value.name).join(', ');
+        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, size: message.source.length, text: parsed.text || '', html: safeHtml, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
       } finally { lock.release(); }
     });
   }
@@ -187,12 +188,26 @@ export class WebmailService {
     if (!text.trim() && !subject) throw new BadRequestException('Email cần có tiêu đề hoặc nội dung');
     if (text.length > 50_000) throw new BadRequestException('Nội dung thư vượt quá giới hạn 50 KB');
     const port = Number(process.env.MAILCOW_SMTP_PORT || 465);
+    const messageOptions = { from: session.email, to, cc: cc.length ? cc : undefined, subject, text, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } };
+    const renderer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'unix' });
     const transport = nodemailer.createTransport({ host: this.smtpHost, port, secure: port === 465, auth: { user: session.email, pass: session.password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 });
     try {
-      const sent = await transport.sendMail({ from: session.email, to, cc: cc.length ? cc : undefined, subject, text, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } });
-      return { accepted: sent.accepted.length, messageId: sent.messageId };
+      const rendered = await renderer.sendMail(messageOptions);
+      if (!Buffer.isBuffer(rendered.message)) throw new Error('MIME message was not buffered');
+      const sent = await transport.sendMail({ raw: rendered.message, envelope: { from: session.email, to: [...to, ...cc] } });
+      let savedToSent = false;
+      try {
+        const client = this.makeClient(session.email, session.password);
+        try {
+          await client.connect();
+          const folders = await client.list();
+          const sentFolder = folders.find(folder => folder.specialUse === '\\Sent') || folders.find(folder => /^(sent|sent items|thư đã gửi)$/i.test(folder.name));
+          if (sentFolder) savedToSent = Boolean(await client.append(sentFolder.path, rendered.message, ['\\Seen']));
+        } finally { await client.logout().catch(() => undefined); }
+      } catch { savedToSent = false; }
+      return { accepted: sent.accepted.length, messageId: rendered.messageId || sent.messageId, savedToSent };
     } catch { throw new BadRequestException('Không gửi được thư. Vui lòng kiểm tra người nhận hoặc thử lại sau.'); }
-    finally { transport.close(); }
+    finally { renderer.close(); transport.close(); }
   }
 }
 
