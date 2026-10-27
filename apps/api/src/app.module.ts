@@ -1,4 +1,4 @@
-import {Body,Controller,ForbiddenException,Get,Headers,Module,Param,Post,Put,Req,Res,Query} from '@nestjs/common';
+import {Body,Controller,ForbiddenException,Get,Headers,Module,Param,Post,Put,Req,Res,Query,StreamableFile,BadRequestException} from '@nestjs/common';
 import {MailCloudService} from './mail-cloud.service';
 import {DatabaseService} from './database.service';
 import {MailcowService} from './mailcow.service';
@@ -40,9 +40,11 @@ class WebmailController {
   @Get('folders') folders(@Req() req:any){return this.webmail.folders(this.token(req));}
   @Get('messages') messages(@Req() req:any,@Query('folder') folder='INBOX',@Query('q') query=''){return this.webmail.messages(this.token(req),folder,query);}
   @Get('messages/:uid') read(@Req() req:any,@Param('uid') uid:string,@Query('folder') folder='INBOX'){return this.webmail.read(this.token(req),folder,Number(uid));}
-  @Post('messages/:uid/flags') flag(@Req() req:any,@Param('uid') uid:string,@Body() body:{folder?:string;flag?:'seen'|'unseen'|'flagged'|'unflagged'}){if(!body.flag||!['seen','unseen','flagged','unflagged'].includes(body.flag))throw new ForbiddenException('Trạng thái thư không hợp lệ');return this.webmail.setFlag(this.token(req),body.folder||'INBOX',Number(uid),body.flag);}
+  @Get('messages/:uid/attachments/:index') async attachment(@Req() req:any,@Param('uid') uid:string,@Param('index') index:string,@Query('folder') folder='INBOX',@Res({passthrough:true}) res:any){const file=await this.webmail.attachment(this.token(req),folder,Number(uid),Number(index));res.setHeader('X-Content-Type-Options','nosniff');return new StreamableFile(file.content,{type:file.contentType,disposition:`attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`});}
+  @Post('messages/:uid/flags') flag(@Req() req:any,@Param('uid') uid:string,@Body() body:{folder?:string;flag?:'seen'|'unseen'|'flagged'|'unflagged'}){if(!body.flag||!['seen','unseen','flagged','unflagged'].includes(body.flag))throw new BadRequestException('Trạng thái thư không hợp lệ');return this.webmail.setFlag(this.token(req),body.folder||'INBOX',Number(uid),body.flag);}
   @Post('messages/:uid/trash') trash(@Req() req:any,@Param('uid') uid:string,@Body() body:{folder?:string}){return this.webmail.moveToTrash(this.token(req),body.folder||'INBOX',Number(uid));}
   @Post('send') send(@Req() req:any,@Body() body:{to?:string;cc?:string;subject?:string;text?:string}){return this.webmail.send(this.token(req),body);}
 }
 
 @Module({controllers:[ApiController,WebmailController],providers:[MailCloudService,DatabaseService,MailcowService,AuthService,WebmailService]}) export class AppModule {}
+
