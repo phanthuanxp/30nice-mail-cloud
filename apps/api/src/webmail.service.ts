@@ -24,7 +24,7 @@ export class WebmailService {
 
   async login(emailInput: string, password: string, sourceIp: string) {
     const email = emailInput.trim().toLowerCase();
-    if (!/^\S+@\S+\.\S+$/.test(email) || !password || password.length > 256) throw new BadRequestException('Vui lòng nhập email và mật khẩu hợp lệ');
+    if (!/^\\S+@\\S+\\.\\S+$/.test(email) || !password || password.length > 256) throw new BadRequestException('Vui lòng nhập email và mật khẩu hợp lệ');
     const key = `${sourceIp}:${email}`;
     const now = Date.now();
     for (const [token, session] of this.sessions) if (session.expiresAt <= now) this.sessions.delete(token);
@@ -103,7 +103,7 @@ export class WebmailService {
           const from = (item.envelope?.from || []) as MailAddress[];
           const to = (item.envelope?.to || []) as MailAddress[];
           const date = item.envelope?.date || item.internalDate || null;
-          return { uid: item.uid, subject: item.envelope?.subject || '(Không có tiêu đề)', from: from.map(address => ({ address: address.address || '', name: address.name || '' })), to: to.map(address => ({ address: address.address || '', name: address.name || '' })), date: date ? new Date(date).toISOString() : null, seen: item.flags?.has('\\Seen') || false, flagged: item.flags?.has('\\Flagged') || false, draft: item.flags?.has('\\Draft') || false, size: item.size || 0 };
+          return { uid: item.uid, subject: item.envelope?.subject || '(Không có tiêu đề)', from: from.map(address => ({ address: address.address || '', name: address.name || '' })), to: to.map(address => ({ address: address.address || '', name: address.name || '' })), date: date ? new Date(date).toISOString() : null, seen: item.flags?.has('\\\\Seen') || false, flagged: item.flags?.has('\\\\Flagged') || false, draft: item.flags?.has('\\\\Draft') || false, size: item.size || 0 };
         }).sort((a, b) => b.uid - a.uid);
         return { folder, total, page, pageSize, messages };
       } finally { lock.release(); }
@@ -121,8 +121,24 @@ export class WebmailService {
         const message = await client.fetchOne(String(uid), { source: true, envelope: true, flags: true }, { uid: true });
         if (!message || !message.source) throw new BadRequestException('Không tìm thấy thư');
         const parsed = await simpleParser(message.source);
-        if (!message.flags?.has('\\Seen')) await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
-        const safeHtml = parsed.html ? sanitizeHtml(parsed.html, { allowedAttributes: { ...sanitizeHtml.defaults.allowedAttributes, a: ['href', 'name', 'target', 'rel'] }, allowedSchemes: ['http', 'https', 'mailto'], disallowedTagsMode: 'discard', transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer', target: '_blank' }) } }) : '';
+        if (!message.flags?.has('\\\\Seen')) await client.messageFlagsAdd(uid, ['\\\\Seen'], { uid: true });
+        const safeHtml = parsed.html ? sanitizeHtml(parsed.html, {
+          allowedTags: [...sanitizeHtml.defaults.allowedTags, 'img', 'h1', 'h2', 'h3', 'hr', 'figure', 'figcaption'],
+          allowedAttributes: {
+            ...sanitizeHtml.defaults.allowedAttributes,
+            '*': ['style'],
+            a: ['href', 'name', 'target', 'rel'],
+            img: ['src', 'alt', 'title', 'width', 'height'],
+            td: ['colspan', 'rowspan', 'align', 'valign', 'width'],
+            th: ['colspan', 'rowspan', 'align', 'valign', 'width'],
+            table: ['width', 'cellpadding', 'cellspacing', 'border', 'align'],
+          },
+          allowedSchemes: ['http', 'https', 'mailto', 'cid'],
+          allowedSchemesByTag: { img: ['cid'] },
+          allowProtocolRelative: false,
+          disallowedTagsMode: 'discard',
+          transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer', target: '_blank' }) },
+        }) : '';
         const fromValues = parsed.from?.value || [];
         const toHeader = Array.isArray(parsed.to) ? parsed.to.flatMap(value => value.value) : parsed.to?.value || [];
         const from = fromValues.map(value => ({ address: value.address || '', name: value.name || '' }));
@@ -132,7 +148,7 @@ export class WebmailService {
         const cc = ccAddresses.map(value => value.address || value.name).join(', ');
         const draftIdHeader = parsed.headers.get('x-30nice-draft-id');
         const draftId = typeof draftIdHeader === 'string' ? draftIdHeader : undefined;
-        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, draftId, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, draft: message.flags?.has('\\Draft') || false, size: message.source.length, text: parsed.text || '', html: safeHtml, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
+        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, draftId, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\\\Flagged') || false, draft: message.flags?.has('\\\\Draft') || false, size: message.source.length, text: parsed.text || '', html: safeHtml, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
       } finally { lock.release(); }
     });
   }
@@ -150,7 +166,7 @@ export class WebmailService {
         const parsed = await simpleParser(message.source);
         const file = parsed.attachments[index];
         if (!file) throw new BadRequestException('Không tìm thấy tệp đính kèm');
-        const filename = (file.filename || 'tep-dinh-kem').replace(/[\r\n"\\/]/g, '_').slice(0, 180);
+        const filename = (file.filename || 'tep-dinh-kem').replace(/[\\r\\n"\\\\/]/g, '_').slice(0, 180);
         return { content: file.content, filename, contentType: file.contentType || 'application/octet-stream' };
       } finally { lock.release(); }
     });
@@ -161,7 +177,7 @@ export class WebmailService {
       const lock = await client.getMailboxLock(folder);
       try {
         const add = flag === 'seen' || flag === 'flagged';
-        const imapFlag = flag === 'seen' || flag === 'unseen' ? '\\Seen' : '\\Flagged';
+        const imapFlag = flag === 'seen' || flag === 'unseen' ? '\\\\Seen' : '\\\\Flagged';
         return add ? client.messageFlagsAdd(uid, [imapFlag], { uid: true }) : client.messageFlagsRemove(uid, [imapFlag], { uid: true });
       } finally { lock.release(); }
     });
@@ -170,7 +186,7 @@ export class WebmailService {
   async moveToTrash(token: string | undefined, folder: string, uid: number) {
     return this.withClient(token, async client => {
       const folders = await client.list();
-      const trash = folders.find(item => item.specialUse === '\\Trash') || folders.find(item => /^(trash|deleted items|thư đã xóa)$/i.test(item.name));
+      const trash = folders.find(item => item.specialUse === '\\\\Trash') || folders.find(item => /^(trash|deleted items|thư đã xóa)$/i.test(item.name));
       if (!trash) throw new BadRequestException('Hộp thư chưa có thư mục Thùng rác');
       const lock = await client.getMailboxLock(folder);
       try { return await client.messageMove(uid, trash.path, { uid: true }); }
@@ -181,7 +197,7 @@ export class WebmailService {
   async moveToArchive(token: string | undefined, folder: string, uid: number) {
     return this.withClient(token, async client => {
       const folders = await client.list();
-      const archive = folders.find(item => item.specialUse === '\\Archive') || folders.find(item => /^(archive|archived|lưu trữ)$/i.test(item.name));
+      const archive = folders.find(item => item.specialUse === '\\\\Archive') || folders.find(item => /^(archive|archived|lưu trữ)$/i.test(item.name));
       if (!archive) throw new BadRequestException('Hộp thư chưa có thư mục Lưu trữ');
       const lock = await client.getMailboxLock(folder);
       try { return await client.messageMove(uid, archive.path, { uid: true }); }
@@ -192,7 +208,7 @@ export class WebmailService {
   async moveToInbox(token: string | undefined, folder: string, uid: number) {
     return this.withClient(token, async client => {
       const folders = await client.list();
-      const inbox = folders.find(item => item.specialUse === '\\Inbox') || folders.find(item => item.path.toUpperCase() === 'INBOX');
+      const inbox = folders.find(item => item.specialUse === '\\\\Inbox') || folders.find(item => item.path.toUpperCase() === 'INBOX');
       if (!inbox) throw new BadRequestException('Không tìm thấy thư mục Hộp thư đến');
       const lock = await client.getMailboxLock(folder);
       try { return await client.messageMove(uid, inbox.path, { uid: true }); }
@@ -204,7 +220,7 @@ export class WebmailService {
     const session = this.session(token);
     const to = (input.to || '').split(',').map(value => value.trim()).filter(Boolean);
     const cc = (input.cc || '').split(',').map(value => value.trim()).filter(Boolean);
-    const validAddress = (address: string) => /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(address);
+    const validAddress = (address: string) => /^[^\\s@,;<>]+@[^\\s@,;<>]+\\.[^\\s@,;<>]+$/.test(address);
     if (!to.length || to.length > 20 || to.some(address => !validAddress(address))) throw new BadRequestException('Nhập địa chỉ người nhận hợp lệ, tối đa 20 người');
     if (cc.length > 20 || cc.some(address => !validAddress(address))) throw new BadRequestException('Địa chỉ CC không hợp lệ');
     if (files.length > 5 || files.reduce((total, file) => total + file.buffer.length, 0) > 20 * 1024 * 1024) throw new BadRequestException('Tổng dung lượng tệp đính kèm tối đa là 20 MB');
@@ -213,7 +229,7 @@ export class WebmailService {
     if (!text.trim() && !subject) throw new BadRequestException('Email cần có tiêu đề hoặc nội dung');
     if (text.length > 50_000) throw new BadRequestException('Nội dung thư vượt quá giới hạn 50 KB');
     const port = Number(process.env.MAILCOW_SMTP_PORT || 465);
-    const messageOptions = { from: session.email, to, cc: cc.length ? cc : undefined, subject, text, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } };
+    const messageOptions = { from: session.email, to, cc: cc.length ? cc : undefined, subject, text, attachments: files.map(file => ({ filename: file.filename.replace(/[\\r\\n"\\\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } };
     const renderer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'windows' });
     const transport = nodemailer.createTransport({ host: this.smtpHost, port, secure: port === 465, auth: { user: session.email, pass: session.password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 });
     try {
@@ -226,8 +242,8 @@ export class WebmailService {
         try {
           await client.connect();
           const folders = await client.list();
-          const sentFolder = folders.find(folder => folder.specialUse === '\\Sent') || folders.find(folder => /^(sent|sent items|thư đã gửi)$/i.test(folder.name));
-          if (sentFolder) savedToSent = Boolean(await client.append(sentFolder.path, rendered.message, ['\\Seen']));
+          const sentFolder = folders.find(folder => folder.specialUse === '\\\\Sent') || folders.find(folder => /^(sent|sent items|thư đã gửi)$/i.test(folder.name));
+          if (sentFolder) savedToSent = Boolean(await client.append(sentFolder.path, rendered.message, ['\\\\Seen']));
         } finally { await client.logout().catch(() => undefined); }
       } catch { savedToSent = false; }
       const draftRemoved = input.draftId ? await this.removeDraftCopies(session.email, session.password, input.draftId, input.replaceUid) : true;
@@ -247,7 +263,7 @@ export class WebmailService {
     if (files.length > 5 || files.reduce((total, file) => total + file.buffer.length, 0) > 20 * 1024 * 1024) throw new BadRequestException('Tổng dung lượng tệp đính kèm tối đa là 20 MB');
     return this.withClient(token, async client => {
       const folders = await client.list();
-      const drafts = folders.find(item => item.specialUse === '\\Drafts') || folders.find(item => /^(drafts|draft|thư nháp)$/i.test(item.name));
+      const drafts = folders.find(item => item.specialUse === '\\\\Drafts') || folders.find(item => /^(drafts|draft|thư nháp)$/i.test(item.name));
       if (!drafts) throw new BadRequestException('Hộp thư chưa có thư mục Thư nháp');
       const lock = await client.getMailboxLock(drafts.path);
       const renderer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'windows' });
@@ -262,10 +278,10 @@ export class WebmailService {
           subject: input.subject || '',
           text: input.text || '',
           headers: { 'X-30NICE-Draft-Id': draftId },
-          attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })),
+          attachments: files.map(file => ({ filename: file.filename.replace(/[\\r\\n"\\\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })),
         });
         if (!Buffer.isBuffer(rendered.message)) throw new Error('Draft MIME message was not buffered');
-        const appended = await client.append(drafts.path, rendered.message, ['\\Draft', '\\Seen']);
+        const appended = await client.append(drafts.path, rendered.message, ['\\\\Draft', '\\\\Seen']);
         if (!appended) throw new BadRequestException('Không thể lưu thư nháp');
         if (oldUids.size) await client.messageDelete([...oldUids], { uid: true });
         return { draftId, uid: appended.uid || null, saved: true };
@@ -279,7 +295,7 @@ export class WebmailService {
     try {
       await client.connect();
       const folders = await client.list();
-      const drafts = folders.find(item => item.specialUse === '\\Drafts') || folders.find(item => /^(drafts|draft|thư nháp)$/i.test(item.name));
+      const drafts = folders.find(item => item.specialUse === '\\\\Drafts') || folders.find(item => /^(drafts|draft|thư nháp)$/i.test(item.name));
       if (!drafts) return false;
       const lock = await client.getMailboxLock(drafts.path);
       try {
@@ -300,4 +316,3 @@ export class WebmailService {
     return { discarded: true };
   }
 }
-
