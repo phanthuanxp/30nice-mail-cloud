@@ -13,6 +13,8 @@ type DraftInput = { draftId?: string; replaceUid?: number; to?: string; cc?: str
 export class WebmailService {
   private readonly sessions = new Map<string, WebmailSession>();
   private readonly attempts = new Map<string, { count: number; resetAt: number }>();
+  private readonly maxSessions = 10_000;
+  private readonly maxAttemptBuckets = 50_000;
   private readonly host = process.env.MAILCOW_IMAP_HOST || 'mx.30nice.vn';
   private readonly smtpHost = process.env.MAILCOW_SMTP_HOST || this.host;
 
@@ -24,23 +26,39 @@ export class WebmailService {
 
   async login(emailInput: string, password: string, sourceIp: string) {
     const email = emailInput.trim().toLowerCase();
-    if (!/^\S+@\S+\.\S+$/.test(email) || !password || password.length > 256) throw new BadRequestException('Vui lòng nhập email và mật khẩu hợp lệ');
-    const key = `${sourceIp}:${email}`;
+    if (email.length > 254 || !/^\S+@\S+\.\S+$/.test(email) || !password || password.length > 256) throw new BadRequestException('Vui lòng nhập email và mật khẩu hợp lệ');
+    const clientIp = (sourceIp || 'unknown').slice(0, 64);
+    const keys = [
+      { key: `pair:${clientIp}:${email}`, limit: 8 },
+      { key: `ip:${clientIp}`, limit: 40 },
+      { key: `account:${email}`, limit: 12 },
+    ];
     const now = Date.now();
     for (const [token, session] of this.sessions) if (session.expiresAt <= now) this.sessions.delete(token);
     for (const [attemptKey, value] of this.attempts) if (value.resetAt <= now) this.attempts.delete(attemptKey);
-    const attempt = this.attempts.get(key);
-    if (attempt && attempt.resetAt > now && attempt.count >= 8) throw new HttpException('Đăng nhập tạm khóa. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
-    const window = !attempt || attempt.resetAt <= now ? { count: 0, resetAt: now + 15 * 60_000 } : attempt;
+    if (keys.some(({ key, limit }) => (this.attempts.get(key)?.count || 0) >= limit)) throw new HttpException('Đăng nhập tạm khóa. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
     try {
       const client = this.makeClient(email, password);
       try { await client.connect(); } finally { await client.logout().catch(() => undefined); }
     } catch {
-      window.count++;
-      this.attempts.set(key, window);
+      if (this.attempts.size + keys.length > this.maxAttemptBuckets) {
+        for (const [attemptKey, value] of this.attempts) if (value.resetAt <= now) this.attempts.delete(attemptKey);
+        while (this.attempts.size + keys.length > this.maxAttemptBuckets) {
+          const oldest = this.attempts.keys().next().value;
+          if (oldest === undefined) break;
+          this.attempts.delete(oldest);
+        }
+      }
+      for (const { key } of keys) {
+        const attempt = this.attempts.get(key);
+        const bucket = !attempt || attempt.resetAt <= now ? { count: 0, resetAt: now + 15 * 60_000 } : attempt;
+        bucket.count++;
+        this.attempts.set(key, bucket);
+      }
       throw new UnauthorizedException('Email hoặc mật khẩu chưa chính xác');
     }
-    this.attempts.delete(key);
+    for (const { key } of keys) this.attempts.delete(key);
+    if (this.sessions.size >= this.maxSessions) throw new HttpException('Hệ thống đang có quá nhiều phiên đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE);
     const token = randomBytes(32).toString('base64url');
     this.sessions.set(token, { email, password, expiresAt: now + 8 * 60 * 60_000 });
     return { token, email, expiresAt: now + 8 * 60 * 60_000 };
