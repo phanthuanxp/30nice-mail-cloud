@@ -78,23 +78,33 @@ export class WebmailService {
     });
   }
 
-  async messages(token: string | undefined, folder: string, query = '') {
+  async messages(token: string | undefined, folder: string, query = '', requestedPage = 1, filter: 'all' | 'unread' | 'starred' = 'all') {
     if (!folder || folder.length > 255) throw new BadRequestException('Thư mục không hợp lệ');
+    if (query.length > 200) throw new BadRequestException('Từ khóa tìm kiếm tối đa 200 ký tự');
+    const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, 1_000_000) : 1;
+    const pageSize = 50;
     return this.withClient(token, async client => {
       const lock = await client.getMailboxLock(folder, { readOnly: true });
       try {
-        const total = client.mailbox ? client.mailbox.exists : 0;
-        if (!total) return { folder, total: 0, messages: [] };
-        const first = Math.max(1, total - 99);
-        const fetched = await client.fetchAll(`${first}:*`, { envelope: true, flags: true, internalDate: true, size: true });
         const term = query.trim().toLocaleLowerCase();
+        const criteria: { all?: boolean; text?: string; seen?: boolean; flagged?: boolean } = {};
+        if (term) criteria.text = term;
+        else criteria.all = true;
+        if (filter === 'unread') criteria.seen = false;
+        else if (filter === 'starred') criteria.flagged = true;
+        const matching = await client.search(criteria, { uid: true });
+        const matchingUids = Array.isArray(matching) ? matching : [];
+        const total = matchingUids.length;
+        const pageUids = matchingUids.slice(Math.max(0, total - page * pageSize), Math.max(0, total - (page - 1) * pageSize)).reverse();
+        if (!pageUids.length) return { folder, total, page, pageSize, messages: [] };
+        const fetched = await client.fetchAll(pageUids, { envelope: true, flags: true, internalDate: true, size: true, uid: true }, { uid: true });
         const messages = fetched.map(item => {
           const from = (item.envelope?.from || []) as MailAddress[];
           const to = (item.envelope?.to || []) as MailAddress[];
           const date = item.envelope?.date || item.internalDate || null;
           return { uid: item.uid, subject: item.envelope?.subject || '(Không có tiêu đề)', from: from.map(address => ({ address: address.address || '', name: address.name || '' })), to: to.map(address => ({ address: address.address || '', name: address.name || '' })), date: date ? new Date(date).toISOString() : null, seen: item.flags?.has('\\Seen') || false, flagged: item.flags?.has('\\Flagged') || false, size: item.size || 0 };
-        }).reverse().filter(item => !term || `${item.subject} ${item.from.map(a => a.name + ' ' + a.address).join(' ')} ${item.to.map(a => a.address).join(' ')}`.toLocaleLowerCase().includes(term));
-        return { folder, total, messages };
+        }).sort((a, b) => b.uid - a.uid);
+        return { folder, total, page, pageSize, messages };
       } finally { lock.release(); }
     });
   }
