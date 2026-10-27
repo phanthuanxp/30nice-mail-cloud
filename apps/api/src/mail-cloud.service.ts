@@ -27,10 +27,76 @@ export class MailCloudService {
   async verifyDomain(tenantId:string,domainId:string,token:string){const candidates=await this.database.query<{domain:string;verification_token:string}>('select domain,verification_token from domains where id=$1::uuid and tenant_id=$2::uuid and status=\'pending\'',[domainId,tenantId]);const candidate=candidates?.[0];if(!candidate)throw new NotFoundException('Tên miền đang chờ xác minh không tồn tại');if(!token||token!==candidate.verification_token)throw new BadRequestException('Mã xác minh không hợp lệ');let records:string[][];try{records=await dns.resolveTxt(`_30nice-verification.${candidate.domain}`);}catch{throw new BadRequestException(`Chưa tìm thấy TXT tại _30nice-verification.${candidate.domain}`);}if(!records.some(record=>record.join('')===candidate.verification_token))throw new BadRequestException('Bản ghi TXT xác minh chưa khớp');const rows=await this.database.query('update domains set status=\'verified\' where id=$1::uuid and tenant_id=$2::uuid and status=\'pending\' returning id::text,tenant_id::text as "tenantId",domain,status',[domainId,tenantId]);if(!rows?.length)throw new BadRequestException('Tên miền đã được xác minh hoặc trạng thái đã thay đổi');this.record('domain.verify',domainId);return rows[0];}
   async listMailboxes(tenantId:string){const rows=await this.database.query('select id::text,tenant_id::text as "tenantId",address,quota_gb as "quotaGb",status from mailboxes where tenant_id=$1::uuid order by address',[tenantId]); return rows??this.mailboxes.filter(m=>m.tenantId===tenantId);}
   async listProvisioningJobs(tenantId:string){const rows=await this.database.query('select id::text,tenant_id::text as "tenantId",idempotency_key as "idempotencyKey",job_type as "jobType",status,attempts,last_error as "lastError",created_at as "createdAt",updated_at as "updatedAt" from provisioning_jobs where tenant_id=$1::uuid order by created_at desc limit 100'); return rows??[];}
-  async createMailbox(tenantId:string,body:{address?:string;quotaGb?:number;password?:string}){const quota=body.quotaGb??5;const address=body.address?.trim().toLowerCase()??'';const parts=address.split('@');if(parts.length!==2||!/^[-a-z0-9._+]+$/i.test(parts[0])||!/^[-a-z0-9.]+\.[a-z]{2,}$/i.test(parts[1])||quota<=0||quota>1000) throw new BadRequestException('Cần địa chỉ email hợp lệ và dung lượng từ 1 đến 1000 GB');const [localPart,domain]=parts;const rows=await this.database.query<{id:string;domain:string}>('select id::text,domain from domains where tenant_id=$1::uuid and domain=$2 and status=\'verified\'',[tenantId,domain]);if(this.mailcowModeIsProduction()&&!rows)throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng; không thể cấp hộp thư an toàn');if(rows&&!rows.length)throw new BadRequestException('Tên miền phải được xác minh trước');const password=body.password??`N${randomBytes(9).toString('base64url')}!${randomInt(1000,10000)}`;try{await this.mailcow.addMailbox(domain,localPart,quota,password);}catch(error){this.record('mailbox.provision_failed',address);throw new BadRequestException(error instanceof Error?error.message:'Mailcow mailbox provisioning failed');}const mailboxRows=await this.database.query<{id:string;tenantId:string;address:string;quotaGb:number;status:string}>('insert into mailboxes(tenant_id,domain_id,address,quota_gb) values($1::uuid,$2::uuid,$3,$4) returning id::text,tenant_id::text as "tenantId",address,quota_gb as "quotaGb",status',[tenantId,rows?.[0]?.id??'00000000-0000-0000-0000-000000000000',address,quota]);const mailbox=mailboxRows?.[0]??{id:`mailbox-${Date.now()}`,tenantId,address,quotaGb:quota,status:'active' as const};if(!mailboxRows)this.mailboxes.push(mailbox as Mailbox);const jobs=await this.database.query<{id:string}>('insert into provisioning_jobs(tenant_id,idempotency_key,job_type) values($1::uuid,$2,\'mailbox.provision\') on conflict (idempotency_key) do update set updated_at=now() returning id::text',[tenantId,`mailbox:${address}`]);this.record('mailbox.create',mailbox.id);return {...mailbox,provisioningJobId:jobs?.[0]?.id??null,provisioningStatus:jobs?'queued':'local-only',temporaryPassword:body.password?undefined:password};}
+  async createMailbox(tenantId:string,body:{address?:string;quotaGb?:number;password?:string}) {
+    const quota=body.quotaGb??5;
+    const address=body.address?.trim().toLowerCase()??'';
+    const parts=address.split('@');
+    if(parts.length!==2||!/^[-a-z0-9._+]+$/i.test(parts[0])||!/^[-a-z0-9.]+\.[a-z]{2,}$/i.test(parts[1])||!Number.isInteger(quota)||quota<1||quota>1000) throw new BadRequestException('Cần địa chỉ email hợp lệ và dung lượng nguyên từ 1 đến 1000 GB');
+    const [localPart,domain]=parts;
+    const rows=await this.database.query<{id:string;domain:string}>('select id::text,domain from domains where tenant_id=$1::uuid and domain=$2 and status=\'verified\'',[tenantId,domain]);
+    if(this.mailcowModeIsProduction()&&!rows) throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng; không thể cấp hộp thư an toàn');
+    if(rows&&!rows.length) throw new BadRequestException('Tên miền phải được xác minh trước');
+    const password=body.password??`N${randomBytes(9).toString('base64url')}!${randomInt(1000,10000)}`;
+    let mailbox: {id:string;tenantId:string;address:string;quotaGb:number;status:string};
+    let jobId: string|null=null;
+    if(rows) {
+      const mailboxRows=await this.database.query<{id:string;tenantId:string;address:string;quotaGb:number;status:string}>(
+        'insert into mailboxes(tenant_id,domain_id,address,quota_gb) values($1::uuid,$2::uuid,$3,$4) returning id::text,tenant_id::text as "tenantId",address,quota_gb as "quotaGb",status',
+        [tenantId,rows[0].id,address,quota],
+      );
+      if(!mailboxRows?.[0]) throw new BadRequestException('Không thể ghi nhận hộp thư trong cơ sở dữ liệu');
+      mailbox=mailboxRows[0];
+      try {
+        const jobs=await this.database.query<{id:string}>(
+          'insert into provisioning_jobs(tenant_id,idempotency_key,job_type) values($1::uuid,$2,\'mailbox.provision\') on conflict (idempotency_key) do update set status=\'queued\',last_error=null,updated_at=now() where provisioning_jobs.status in (\'failed\',\'dead_letter\') returning id::text',
+          [tenantId,`mailbox:${address}`],
+        );
+        jobId=jobs?.[0]?.id??null;
+      } catch(error) {
+        await this.database.query('delete from mailboxes where id=$1::uuid and tenant_id=$2::uuid',[mailbox.id,tenantId]);
+        throw error;
+      }
+    } else {
+      mailbox={id:`mailbox-${Date.now()}`,tenantId,address,quotaGb:quota,status:'active'};
+    }
+    try {
+      await this.mailcow.addMailbox(domain,localPart,quota,password);
+    } catch(error) {
+      if(rows) {
+        await this.database.query('delete from mailboxes where id=$1::uuid and tenant_id=$2::uuid',[mailbox.id,tenantId]).catch(()=>undefined);
+        if(jobId) await this.database.query('update provisioning_jobs set status=\'failed\',attempts=attempts+1,last_error=$2,updated_at=now() where id=$1::uuid',[jobId,error instanceof Error?error.message:'Mailcow mailbox provisioning failed']).catch(()=>undefined);
+      } else {
+        this.mailboxes.push(mailbox as Mailbox);
+      }
+      this.record('mailbox.provision_failed',address);
+      throw new BadRequestException(error instanceof Error?error.message:'Mailcow mailbox provisioning failed');
+    }
+    if(!rows) this.mailboxes.push(mailbox as Mailbox);
+    if(jobId) await this.database.query('update provisioning_jobs set status=\'succeeded\',attempts=attempts+1,last_error=null,updated_at=now() where id=$1::uuid',[jobId]).catch(()=>undefined);
+    this.record('mailbox.create',mailbox.id);
+    return {...mailbox,provisioningJobId:jobId,provisioningStatus:jobId?'succeeded':'local-only',temporaryPassword:body.password?undefined:password};
+  }
   private mailcowModeIsProduction(){return process.env.MAIL_ADAPTER_MODE==='production';}
   private databaseReady(){return Boolean(process.env.DATABASE_URL);}
-  async updateMailbox(tenantId:string,id:string,body:{quotaGb?:number;status?:'active'|'disabled'}){if(body.quotaGb!==undefined&&(body.quotaGb<=0||body.quotaGb>1000)) throw new BadRequestException('quotaGb must be 1-1000'); const current=await this.database.query<{address:string;quotaGb:number;status:'active'|'disabled'}>('select address,quota_gb as "quotaGb",status from mailboxes where id=$1::uuid and tenant_id=$2::uuid',[id,tenantId]); const existing=current?.[0]??this.mailboxes.find(m=>m.id===id&&m.tenantId===tenantId); if(!existing) throw new NotFoundException('Mailbox not found'); try {await this.mailcow.editMailbox(existing.address,body.quotaGb??existing.quotaGb,body.status??existing.status);} catch(error){throw new BadRequestException(error instanceof Error?error.message:'Mailcow mailbox update failed');} const rows=await this.database.query('update mailboxes set quota_gb=coalesce($3,quota_gb),status=coalesce($4,status) where id=$1::uuid and tenant_id=$2::uuid returning id::text,tenant_id::text as "tenantId",address,quota_gb as "quotaGb",status',[id,tenantId,body.quotaGb??null,body.status??null]); const mailbox=rows?.[0]??existing; if(!rows) Object.assign(mailbox,body); this.record('mailbox.update',id); return mailbox;}
+  async updateMailbox(tenantId:string,id:string,body:{quotaGb?:number;status?:'active'|'disabled'}) {
+    if(body.quotaGb!==undefined&&(!Number.isInteger(body.quotaGb)||body.quotaGb<1||body.quotaGb>1000)) throw new BadRequestException('Dung lượng phải là số nguyên từ 1 đến 1000 GB');
+    const current=await this.database.query<{address:string;quotaGb:number;status:'active'|'disabled'}>('select address,quota_gb as "quotaGb",status from mailboxes where id=$1::uuid and tenant_id=$2::uuid',[id,tenantId]);
+    const existing=current?.[0]??this.mailboxes.find(m=>m.id===id&&m.tenantId===tenantId);
+    if(!existing) throw new NotFoundException('Mailbox not found');
+    const next={quotaGb:body.quotaGb??existing.quotaGb,status:body.status??existing.status};
+    const rows=await this.database.query('update mailboxes set quota_gb=$3,status=$4 where id=$1::uuid and tenant_id=$2::uuid returning id::text,tenant_id::text as "tenantId",address,quota_gb as "quotaGb",status',[id,tenantId,next.quotaGb,next.status]);
+    if(this.mailcowModeIsProduction()&&!rows) throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng; không thể cập nhật hộp thư');
+    if(rows&&!rows.length) throw new NotFoundException('Mailbox not found');
+    try {
+      await this.mailcow.editMailbox(existing.address,next.quotaGb,next.status);
+    } catch(error) {
+      if(rows) await this.database.query('update mailboxes set quota_gb=$2,status=$3 where id=$1::uuid',[id,existing.quotaGb,existing.status]).catch(()=>undefined);
+      throw new BadRequestException(error instanceof Error?error.message:'Mailcow mailbox update failed');
+    }
+    const mailbox=rows?.[0]??Object.assign(existing,next);
+    this.record('mailbox.update',id);
+    return mailbox;
+  }
   private record(action:string,resourceId:string,requestId?:string){this.audit.push({action,resourceId,requestId:requestId??'system',createdAt:new Date().toISOString()}); void this.database.query('insert into audit_logs(action,resource_type,resource_id,request_id) values($1,$2,$3,$4)',[action,action.split('.')[0],resourceId,requestId??'system']).catch(()=>undefined);}
   databaseStatus(){return this.database.status();}
 }
