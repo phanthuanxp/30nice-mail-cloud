@@ -8,6 +8,10 @@
 - Available space on C: was approximately 21.3 GiB. The CIM memory query was unavailable; the brief's 8 GiB assumption was therefore not re-confirmed.
 - `.env` was created from `.env.example` locally and is ignored; no production secrets were added.
 
+## Current toolchain requirement
+
+- The current NestJS 12 CLI toolchain requires Node.js `22.22.3+` on the 22.x line or `24.15.0+` on the 24.x line. The recorded local baseline `24.14.1` is one patch below that supported range; upgrade Node before running the latest CLI locally.
+
 ## Commands
 
 ```powershell
@@ -25,3 +29,4 @@ PostgreSQL and Redis remain optional and are not wired to the mock API.
 ## Guardrails
 
 This local setup does not deploy VPS, change DNS/MX, provision real mailboxes, send email, or connect Mailcow production.
+
