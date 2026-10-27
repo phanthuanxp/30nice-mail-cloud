@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 
 type WebmailSession = { email: string; password: string; expiresAt: number };
 type MailAddress = { address?: string; name?: string };
-type DraftInput = { draftId?: string; replaceUid?: number; to?: string; cc?: string; subject?: string; text?: string };
+type DraftInput = { draftId?: string; replaceUid?: number; to?: string; cc?: string; subject?: string; text?: string; html?: string };
 
 @Injectable()
 export class WebmailService {
@@ -66,6 +66,45 @@ export class WebmailService {
     finally { await client.logout().catch(() => undefined); }
   }
 
+  private sanitizeMessageHtml(html: string) {
+    if (!html) return '';
+    return sanitizeHtml(html, {
+      allowedTags: [...sanitizeHtml.defaults.allowedTags, 'img', 'h1', 'h2', 'h3', 'hr', 'figure', 'figcaption'],
+      allowedAttributes: {
+        ...sanitizeHtml.defaults.allowedAttributes,
+        '*': ['style'],
+        a: ['href', 'name', 'target', 'rel'],
+        img: ['src', 'alt', 'title', 'width', 'height'],
+        td: ['colspan', 'rowspan', 'align', 'valign', 'width'],
+        th: ['colspan', 'rowspan', 'align', 'valign', 'width'],
+        table: ['width', 'cellpadding', 'cellspacing', 'border', 'align'],
+      },
+      allowedStyles: {
+        '*': {
+          color: [/^#[\da-f]{3,8}$/i, /^rgba?\([\d.%\s,]+\)$/i],
+          'background-color': [/^#[\da-f]{3,8}$/i, /^rgba?\([\d.%\s,]+\)$/i, /^transparent$/i],
+          'font-family': [/^[\w\s,"'-]+$/],
+          'font-size': [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)$/i],
+          'font-weight': [/^(?:normal|bold|[1-9]00)$/i],
+          'font-style': [/^(?:normal|italic|oblique)$/i],
+          'text-align': [/^(?:left|right|center|justify)$/i],
+          'text-decoration': [/^(?:none|underline|line-through)$/i],
+          'vertical-align': [/^(?:top|middle|bottom|baseline)$/i],
+          'white-space': [/^(?:normal|nowrap|pre-wrap)$/i],
+          width: [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)$/i],
+          height: [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)$/i],
+          'max-width': [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)$/i],
+          'border-collapse': [/^(?:collapse|separate)$/i],
+        },
+      },
+      allowedSchemes: ['http', 'https', 'mailto', 'cid'],
+      allowedSchemesByTag: { img: ['cid'] },
+      allowProtocolRelative: false,
+      disallowedTagsMode: 'discard',
+      transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer', target: '_blank' }) },
+    });
+  }
+
   async folders(token?: string) {
     return this.withClient(token, async client => {
       const folders = await client.list();
@@ -122,41 +161,7 @@ export class WebmailService {
         if (!message || !message.source) throw new BadRequestException('Không tìm thấy thư');
         const parsed = await simpleParser(message.source);
         if (!message.flags?.has('\\Seen')) await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
-        const safeHtml = parsed.html ? sanitizeHtml(parsed.html, {
-          allowedTags: [...sanitizeHtml.defaults.allowedTags, 'img', 'h1', 'h2', 'h3', 'hr', 'figure', 'figcaption'],
-          allowedAttributes: {
-            ...sanitizeHtml.defaults.allowedAttributes,
-            '*': ['style'],
-            a: ['href', 'name', 'target', 'rel'],
-            img: ['src', 'alt', 'title', 'width', 'height'],
-            td: ['colspan', 'rowspan', 'align', 'valign', 'width'],
-            th: ['colspan', 'rowspan', 'align', 'valign', 'width'],
-            table: ['width', 'cellpadding', 'cellspacing', 'border', 'align'],
-          },
-          allowedStyles: {
-            '*': {
-              color: [/^#[\da-f]{3,8}$/i, /^rgba?\([\d.%\s,]+\)$/i],
-              'background-color': [/^#[\da-f]{3,8}$/i, /^rgba?\([\d.%\s,]+\)$/i, /^transparent$/i],
-              'font-family': [/^[\w\s,"'-]+$/],
-              'font-size': [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)$/i],
-              'font-weight': [/^(?:normal|bold|[1-9]00)$/i],
-              'font-style': [/^(?:normal|italic|oblique)$/i],
-              'text-align': [/^(?:left|right|center|justify)$/i],
-              'text-decoration': [/^(?:none|underline|line-through)$/i],
-              'vertical-align': [/^(?:top|middle|bottom|baseline)$/i],
-              'white-space': [/^(?:normal|nowrap|pre-wrap)$/i],
-              width: [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)$/i],
-              height: [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)$/i],
-              'max-width': [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)$/i],
-              'border-collapse': [/^(?:collapse|separate)$/i],
-            },
-          },
-          allowedSchemes: ['http', 'https', 'mailto', 'cid'],
-          allowedSchemesByTag: { img: ['cid'] },
-          allowProtocolRelative: false,
-          disallowedTagsMode: 'discard',
-          transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer', target: '_blank' }) },
-        }) : '';
+        const safeHtml = this.sanitizeMessageHtml(typeof parsed.html === 'string' ? parsed.html : '');
         const fromValues = parsed.from?.value || [];
         const toHeader = Array.isArray(parsed.to) ? parsed.to.flatMap(value => value.value) : parsed.to?.value || [];
         const from = fromValues.map(value => ({ address: value.address || '', name: value.name || '' }));
@@ -244,10 +249,12 @@ export class WebmailService {
     if (files.length > 5 || files.reduce((total, file) => total + file.buffer.length, 0) > 20 * 1024 * 1024) throw new BadRequestException('Tổng dung lượng tệp đính kèm tối đa là 20 MB');
     const subject = (input.subject || '').trim().slice(0, 998);
     const text = input.text || '';
-    if (!text.trim() && !subject) throw new BadRequestException('Email cần có tiêu đề hoặc nội dung');
+    const html = this.sanitizeMessageHtml(input.html || '');
+    if (!text.trim() && !html.replace(/<[^>]*>/g, '').trim() && !subject) throw new BadRequestException('Email cần có tiêu đề hoặc nội dung');
     if (text.length > 50_000) throw new BadRequestException('Nội dung thư vượt quá giới hạn 50 KB');
+    if (html.length > 100_000) throw new BadRequestException('Định dạng thư vượt quá giới hạn cho phép');
     const port = Number(process.env.MAILCOW_SMTP_PORT || 465);
-    const messageOptions = { from: session.email, to, cc: cc.length ? cc : undefined, subject, text, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } };
+    const messageOptions = { from: session.email, to, cc: cc.length ? cc : undefined, subject, text, html: html || undefined, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } };
     const renderer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'windows' });
     const transport = nodemailer.createTransport({ host: this.smtpHost, port, secure: port === 465, auth: { user: session.email, pass: session.password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 });
     try {
@@ -277,7 +284,8 @@ export class WebmailService {
     const to = (input.to || '').split(',').map(value => value.trim()).filter(Boolean);
     const cc = (input.cc || '').split(',').map(value => value.trim()).filter(Boolean);
     if (to.length > 20 || cc.length > 20 || [...to, ...cc].some(value => value.length > 254)) throw new BadRequestException('Danh sách người nhận trong thư nháp không hợp lệ');
-    if ((input.subject || '').length > 998 || (input.text || '').length > 50_000) throw new BadRequestException('Thư nháp vượt quá giới hạn cho phép');
+    const html = this.sanitizeMessageHtml(input.html || '');
+    if ((input.subject || '').length > 998 || (input.text || '').length > 50_000 || html.length > 100_000) throw new BadRequestException('Thư nháp vượt quá giới hạn cho phép');
     if (files.length > 5 || files.reduce((total, file) => total + file.buffer.length, 0) > 20 * 1024 * 1024) throw new BadRequestException('Tổng dung lượng tệp đính kèm tối đa là 20 MB');
     return this.withClient(token, async client => {
       const folders = await client.list();
@@ -295,6 +303,7 @@ export class WebmailService {
           cc: cc.length ? cc : undefined,
           subject: input.subject || '',
           text: input.text || '',
+          html: html || undefined,
           headers: { 'X-30NICE-Draft-Id': draftId },
           attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })),
         });
