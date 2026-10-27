@@ -7,3 +7,5 @@
 
 .wm-message-html{max-width:100%;overflow-x:auto;overflow-wrap:anywhere}.wm-message-html img{max-width:100%;height:auto}.wm-message-html table{max-width:100%}.wm-message-html pre{white-space:pre-wrap;overflow-wrap:anywhere}
 
+
+.wm-shortcut-heading{margin:21px 0 10px;color:#40516a;font-size:13px}.wm-shortcut-list{display:grid;grid-template-columns:1fr 1fr;gap:9px 18px;padding:0;margin:0;list-style:none;color:#68778c;font-size:11px}.wm-shortcut-list li{display:flex;align-items:center;gap:9px}.wm-shortcut-list kbd{min-width:27px;padding:4px 7px;border:1px solid #dce3ed;border-bottom-width:2px;border-radius:5px;background:#f8fafc;color:#40516a;text-align:center;font:600 11px/1.2 Arial,Helvetica,sans-serif}@media(max-width:500px){.wm-shortcut-list{grid-template-columns:1fr}}
