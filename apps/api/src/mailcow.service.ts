@@ -8,13 +8,13 @@ export class MailcowService {
   async health(){
     if(this.mode==='mock') return {mode:'mock' as const,healthy:true,configured:false};
     if(!this.baseUrl||!this.apiKey) return {mode:this.mode,healthy:false,configured:false};
-    try { const response=await fetch(`${this.baseUrl}/api/v1/get/domain/all`,{headers:{'X-API-Key':this.apiKey}}); return {mode:this.mode,healthy:response.ok,configured:true,httpStatus:response.status}; }
+    try { const response=await fetch(`${this.baseUrl}/api/v1/get/domain/all`,{headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(5000)}); return {mode:this.mode,healthy:response.ok,configured:true,httpStatus:response.status}; }
     catch { return {mode:this.mode,healthy:false,configured:true}; }
   }
   private async request(path:string,body:Record<string,unknown>){
     if(this.mode==='dry-run') return [{type:'success',msg:'dry-run'}];
     if(!this.baseUrl||!this.apiKey) throw new Error('Mailcow API is not configured');
-    const response=await fetch(`${this.baseUrl}${path}`,{method:'POST',headers:{'Content-Type':'application/json','X-API-Key':this.apiKey},body:JSON.stringify(body)});
+    const response=await fetch(`${this.baseUrl}${path}`,{method:'POST',headers:{'Content-Type':'application/json','X-API-Key':this.apiKey},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});
     const result=await response.json().catch(()=>[]);
     if(!response.ok) throw new Error(`Mailcow API HTTP ${response.status}`);
     if(Array.isArray(result)&&result.some((item:{type?:string})=>item.type==='danger')) throw new Error('Mailcow rejected the provisioning request');
