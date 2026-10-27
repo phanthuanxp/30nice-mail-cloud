@@ -1,14 +1,433 @@
 "use client";
-import {useEffect,useState} from 'react';
-import {Mail,LayoutDashboard,Building2,Globe2,ReceiptText,Settings,ShieldCheck,Server,Plus,Search,ArrowUpRight,CheckCircle2,Clock3,AlertTriangle,ChevronDown,Copy,ExternalLink,WandSparkles} from 'lucide-react';
-import DomainWizard from './DomainWizard';
-import AuthGate from './AuthGate';
-import DnsHealthPanel from './DnsHealthPanel';
-import MemberPanel from './MemberPanel';
-type Tenant={id:string;name:string;slug:string;created_at?:string;domain?:string;mailboxes:number;status:string};
-const tenants:Tenant[]=[];
-const menus=[{label:'Tổng quan',icon:LayoutDashboard},{label:'Khách hàng',icon:Building2},{label:'Tên miền',icon:Globe2},{label:'Hộp thư',icon:Mail},{label:'Thành viên',icon:Building2},{label:'Gói dịch vụ',icon:ReceiptText},{label:'Máy chủ',icon:Server},{label:'Bảo mật',icon:ShieldCheck},{label:'Cài đặt',icon:Settings}];
-const dnsRecords=[{type:'MX',host:'@',value:'mx.30nice.vn',help:'Nhận thư đến cho tên miền'},{type:'TXT',host:'@',value:'v=spf1 mx a -all',help:'Xác thực máy chủ được phép gửi thư'},{type:'TXT',host:'dkim._domainkey',value:'Lấy mã DKIM riêng trong Mailcow',help:'Ký số cho email gửi đi'},{type:'TXT',host:'_dmarc',value:'v=DMARC1; p=quarantine; rua=mailto:admin@30nice.vn',help:'Bảo vệ tên miền khỏi giả mạo'}];
-function Dashboard(){const [active,setActive]=useState('Tổng quan');const [query,setQuery]=useState('');const [filter,setFilter]=useState('Tất cả');const [data,setData]=useState<Tenant[]>(tenants);useEffect(()=>{fetch('/api/api/v1/tenants',{headers:{'x-role':'super_admin'}}).then(r=>r.json()).then(async (items)=>{const enriched=await Promise.all(items.map(async (t:Tenant)=>{const domains=await fetch(`/api/api/v1/tenants/${t.id}/domains`,{headers:{'x-role':'super_admin'}}).then(r=>r.json());const mailboxes=await fetch(`/api/api/v1/tenants/${t.id}/mailboxes`,{headers:{'x-role':'super_admin'}}).then(r=>r.json());return {...t,domain:domains[0]?.domain??'Chưa có domain',mailboxes:mailboxes.length,status:domains[0]?.status==='verified'?'Đã xác minh':'Chờ xác minh'};}));setData(enriched);}).catch(()=>setData([]));},[]);const shown=data.filter(t=>(filter==='Tất cả'||t.status===filter)&&`${t.name} ${t.domain}`.toLowerCase().includes(query.toLowerCase()));return <div className="shell"><aside className="sidebar"><div className="brand"><div className="logo"><Mail size={22}/></div><div><b>30NICE <span>MAIL</span></b><small>CLOUD CONTROL</small></div></div><div className="workspace"><span className="avatar">30</span><div><b>30 NICE</b><small>Super Administrator</small></div><ChevronDown size={14}/></div><div className="menucap">WORKSPACE</div><nav>{menus.map(({label,icon:Icon})=><button key={label} onClick={()=>setActive(label)} className={active===label?'selected':''}><Icon size={18}/>{label}{label==='Hộp thư'&&<em>{data.reduce((n,t)=>n+t.mailboxes,0)}</em>}</button>)}</nav><div className="sidestatus"><div className="statusline"><span className="statusdot"/> PRODUCTION SAFE MODE</div><p>Database: PostgreSQL</p><p>Mail Adapter: Mock</p></div><div className="sidebarfoot"><span className="avatar user">PT</span><div><b>Administrator</b><small>Production control</small></div></div></aside><main><header><div className="breadcrumb">30NICE Mail Cloud <span>/</span> {active}</div><div className="headerRight"><span className="localpill"><span className="statusdot"/> LIVE · SAFE MODE</span><span className="avatar user">PT</span></div></header><div className="content"><div className="pagetop"><div><div className="eyebrow">MAIL HOSTING PLATFORM <span>·</span> VERSION 0.3.0</div><h1>{active}</h1><p>{active==='Tổng quan'?'Quản lý hạ tầng email hosting đa khách hàng tại một nơi.':'Dữ liệu đang đọc trực tiếp từ API và PostgreSQL.'}</p></div><button className="primary" onClick={()=>setActive('Khách hàng')}><Plus size={16}/> Quản lý khách hàng</button></div>{active==='Tổng quan'?<><section className="stats"><div className="metric"><div className="metricTitle">Khách hàng <Building2 size={19}/></div><strong>{data.length}</strong><small>Dữ liệu PostgreSQL</small></div><div className="metric"><div className="metricTitle">Tên miền <Globe2 size={19}/></div><strong>{data.filter(t=>t.domain&&t.domain!=='Chưa có domain').length}</strong><small>Đã đăng ký trong hệ thống</small></div><div className="metric"><div className="metricTitle">Hộp thư <Mail size={19}/></div><strong>{data.reduce((n,t)=>n+t.mailboxes,0)}</strong><small>Provisioning database</small></div><div className="metric"><div className="metricTitle">Database <ReceiptText size={19}/></div><strong className="label ok">CONNECTED</strong><small>API health verified</small></div></section><section className="twocol"><div className="panel stretch"><div className="sectionTitle"><div><h2>Tổng quan hạ tầng</h2><p>Trạng thái production-safe hiện tại</p></div><span className="mutedpill">LIVE</span></div><div className="systemRow"><div className="systemIcon"><LayoutDashboard size={18}/></div><div><b>SaaS Control Plane</b><small>Portal + API + PostgreSQL</small></div><span className="label ok">Online</span></div><div className="systemRow"><div className="systemIcon"><Server size={18}/></div><div><b>Mail Backend</b><small>Mailcow adapter</small></div><span className="label warning">Mock mode</span></div><div className="systemRow"><div className="systemIcon"><ShieldCheck size={18}/></div><div><b>HTTPS / DNS</b><small>mail.30nice.vn</small></div><span className="label ok">Online</span></div></div><div className="panel stretch"><div className="sectionTitle"><div><h2>Trạng thái phát hành</h2><p>Production-safe rollout</p></div></div><div className="progress"><div style={{width:'70%'}}/></div><div className="percent">Control plane <b>70%</b></div><ul className="tasks"><li><CheckCircle2 size={17}/> Tenant persistence</li><li><CheckCircle2 size={17}/> Domain verification</li><li><CheckCircle2 size={17}/> Mailbox persistence</li><li><CheckCircle2 size={17}/> Audit log persistence</li><li><Clock3 size={17}/> Mailcow / SMTP adapter</li></ul></div></section><section className="panel"><div className="sectionTitle"><div><h2>Khách hàng</h2><p>Đọc trực tiếp từ tenant API</p></div><button className="ghost" onClick={()=>setActive('Khách hàng')}>Xem chi tiết <ArrowUpRight size={15}/></button></div><CustomerTable data={shown}/></section></>:<section className="panel"><div className="sectionTitle"><div><h2>{active}</h2><p>Dữ liệu backend production-safe</p></div><span className="label ok">API connected</span></div>{active==='Tên miền'?<><DomainWizard/><DnsHealthPanel/></>:active==='Thành viên'?<MemberPanel/>:active==='Khách hàng'?<><div className="tools"><div className="search"><Search size={16}/><input placeholder="Tìm khách hàng hoặc tên miền..." value={query} onChange={e=>setQuery(e.target.value)}/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option>Tất cả</option><option>Đã xác minh</option><option>Chờ xác minh</option></select></div><CustomerTable data={shown}/></>:<div className="empty"><AlertTriangle size={26}/><h3>Module đang được nối dần vào backend</h3><p>Tenant data đã live. Domain và mailbox actions sẽ được mở ở sprint tiếp theo.</p></div>}</section>}<footer>30NICE MAIL CLOUD · PRODUCTION-SAFE · MAIL ADAPTER MOCK</footer></div></main></div>}
-export default function Home(){return <AuthGate><Dashboard/></AuthGate>}
-function CustomerTable({data}:{data:typeof tenants}){return <div className="tablewrap"><table><thead><tr><th>KHÁCH HÀNG</th><th>TÊN MIỀN</th><th>MAILBOX DEMO</th><th>TRẠNG THÁI</th></tr></thead><tbody>{data.map((t,i)=><tr key={t.domain}><td><div className="customer"><span className="customerIcon">{i===0?'30':t.name.charAt(0)}</span><b>{t.name}</b></div></td><td>{t.domain}</td><td>{t.mailboxes}</td><td><span className={'label '+(t.status==='Nội bộ'?'ok':'neutral')}>{t.status}</span></td></tr>)}{data.length===0&&<tr><td colSpan={4}>Không có kết quả</td></tr>}</tbody></table></div>}
+import { useEffect, useState } from "react";
+import {
+  Mail,
+  LayoutDashboard,
+  Building2,
+  Globe2,
+  ReceiptText,
+  Settings,
+  ShieldCheck,
+  Server,
+  Plus,
+  Search,
+  ArrowUpRight,
+  CheckCircle2,
+  Clock3,
+  AlertTriangle,
+  ChevronDown,
+  Copy,
+  ExternalLink,
+  WandSparkles,
+} from "lucide-react";
+import DomainWizard from "./DomainWizard";
+import AuthGate from "./AuthGate";
+import DnsHealthPanel from "./DnsHealthPanel";
+import MemberPanel from "./MemberPanel";
+import MailboxPanel from "./MailboxPanel";
+type Tenant = {
+  id: string;
+  name: string;
+  slug: string;
+  created_at?: string;
+  domain?: string;
+  mailboxes: number;
+  status: string;
+};
+const tenants: Tenant[] = [];
+const menus = [
+  { label: "Tổng quan", icon: LayoutDashboard },
+  { label: "Khách hàng", icon: Building2 },
+  { label: "Tên miền", icon: Globe2 },
+  { label: "Hộp thư", icon: Mail },
+  { label: "Thành viên", icon: Building2 },
+  { label: "Gói dịch vụ", icon: ReceiptText },
+  { label: "Máy chủ", icon: Server },
+  { label: "Bảo mật", icon: ShieldCheck },
+  { label: "Cài đặt", icon: Settings },
+];
+const dnsRecords = [
+  {
+    type: "MX",
+    host: "@",
+    value: "mx.30nice.vn",
+    help: "Nhận thư đến cho tên miền",
+  },
+  {
+    type: "TXT",
+    host: "@",
+    value: "v=spf1 mx a -all",
+    help: "Xác thực máy chủ được phép gửi thư",
+  },
+  {
+    type: "TXT",
+    host: "dkim._domainkey",
+    value: "Lấy mã DKIM riêng trong Mailcow",
+    help: "Ký số cho email gửi đi",
+  },
+  {
+    type: "TXT",
+    host: "_dmarc",
+    value: "v=DMARC1; p=quarantine; rua=mailto:admin@30nice.vn",
+    help: "Bảo vệ tên miền khỏi giả mạo",
+  },
+];
+function Dashboard() {
+  const [active, setActive] = useState("Tổng quan");
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("Tất cả");
+  const [data, setData] = useState<Tenant[]>(tenants);
+  useEffect(() => {
+    fetch("/api/api/v1/tenants", { headers: { "x-role": "super_admin" } })
+      .then((r) => r.json())
+      .then(async (items) => {
+        const enriched = await Promise.all(
+          items.map(async (t: Tenant) => {
+            const domains = await fetch(`/api/api/v1/tenants/${t.id}/domains`, {
+              headers: { "x-role": "super_admin" },
+            }).then((r) => r.json());
+            const mailboxes = await fetch(
+              `/api/api/v1/tenants/${t.id}/mailboxes`,
+              { headers: { "x-role": "super_admin" } },
+            ).then((r) => r.json());
+            return {
+              ...t,
+              domain: domains[0]?.domain ?? "Chưa có domain",
+              mailboxes: mailboxes.length,
+              status:
+                domains[0]?.status === "verified"
+                  ? "Đã xác minh"
+                  : "Chờ xác minh",
+            };
+          }),
+        );
+        setData(enriched);
+      })
+      .catch(() => setData([]));
+  }, []);
+  const shown = data.filter(
+    (t) =>
+      (filter === "Tất cả" || t.status === filter) &&
+      `${t.name} ${t.domain}`.toLowerCase().includes(query.toLowerCase()),
+  );
+  return (
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="logo">
+            <Mail size={22} />
+          </div>
+          <div>
+            <b>
+              30NICE <span>MAIL</span>
+            </b>
+            <small>CLOUD CONTROL</small>
+          </div>
+        </div>
+        <div className="workspace">
+          <span className="avatar">30</span>
+          <div>
+            <b>30 NICE</b>
+            <small>Super Administrator</small>
+          </div>
+          <ChevronDown size={14} />
+        </div>
+        <div className="menucap">WORKSPACE</div>
+        <nav>
+          {menus.map(({ label, icon: Icon }) => (
+            <button
+              key={label}
+              onClick={() => setActive(label)}
+              className={active === label ? "selected" : ""}
+            >
+              <Icon size={18} />
+              {label}
+              {label === "Hộp thư" && (
+                <em>{data.reduce((n, t) => n + t.mailboxes, 0)}</em>
+              )}
+            </button>
+          ))}
+        </nav>
+        <div className="sidestatus">
+          <div className="statusline">
+            <span className="statusdot" /> PRODUCTION SAFE MODE
+          </div>
+          <p>Database: PostgreSQL</p>
+          <p>Mail Adapter: Mailcow</p>
+        </div>
+        <div className="sidebarfoot">
+          <span className="avatar user">PT</span>
+          <div>
+            <b>Administrator</b>
+            <small>Production control</small>
+          </div>
+        </div>
+      </aside>
+      <main>
+        <header>
+          <div className="breadcrumb">
+            30NICE Mail Cloud <span>/</span> {active}
+          </div>
+          <div className="headerRight">
+            <span className="localpill">
+              <span className="statusdot" /> LIVE · SAFE MODE
+            </span>
+            <span className="avatar user">PT</span>
+          </div>
+        </header>
+        <div className="content">
+          <div className="pagetop">
+            <div>
+              <div className="eyebrow">
+                MAIL HOSTING PLATFORM <span>·</span> VERSION 0.3.0
+              </div>
+              <h1>{active}</h1>
+              <p>
+                {active === "Tổng quan"
+                  ? "Quản lý hạ tầng email hosting đa khách hàng tại một nơi."
+                  : "Dữ liệu đang đọc trực tiếp từ API và PostgreSQL."}
+              </p>
+            </div>
+            <button className="primary" onClick={() => setActive("Khách hàng")}>
+              <Plus size={16} /> Quản lý khách hàng
+            </button>
+          </div>
+          {active === "Tổng quan" ? (
+            <>
+              <section className="stats">
+                <div className="metric">
+                  <div className="metricTitle">
+                    Khách hàng <Building2 size={19} />
+                  </div>
+                  <strong>{data.length}</strong>
+                  <small>Dữ liệu PostgreSQL</small>
+                </div>
+                <div className="metric">
+                  <div className="metricTitle">
+                    Tên miền <Globe2 size={19} />
+                  </div>
+                  <strong>
+                    {
+                      data.filter(
+                        (t) => t.domain && t.domain !== "Chưa có domain",
+                      ).length
+                    }
+                  </strong>
+                  <small>Đã đăng ký trong hệ thống</small>
+                </div>
+                <div className="metric">
+                  <div className="metricTitle">
+                    Hộp thư <Mail size={19} />
+                  </div>
+                  <strong>{data.reduce((n, t) => n + t.mailboxes, 0)}</strong>
+                  <small>Provisioning database</small>
+                </div>
+                <div className="metric">
+                  <div className="metricTitle">
+                    Database <ReceiptText size={19} />
+                  </div>
+                  <strong className="label ok">CONNECTED</strong>
+                  <small>API health verified</small>
+                </div>
+              </section>
+              <section className="twocol">
+                <div className="panel stretch">
+                  <div className="sectionTitle">
+                    <div>
+                      <h2>Tổng quan hạ tầng</h2>
+                      <p>Trạng thái production-safe hiện tại</p>
+                    </div>
+                    <span className="mutedpill">LIVE</span>
+                  </div>
+                  <div className="systemRow">
+                    <div className="systemIcon">
+                      <LayoutDashboard size={18} />
+                    </div>
+                    <div>
+                      <b>SaaS Control Plane</b>
+                      <small>Portal + API + PostgreSQL</small>
+                    </div>
+                    <span className="label ok">Online</span>
+                  </div>
+                  <div className="systemRow">
+                    <div className="systemIcon">
+                      <Server size={18} />
+                    </div>
+                    <div>
+                      <b>Mail Backend</b>
+                      <small>Mailcow adapter</small>
+                    </div>
+                    <span className="label ok">Mailcow online</span>
+                  </div>
+                  <div className="systemRow">
+                    <div className="systemIcon">
+                      <ShieldCheck size={18} />
+                    </div>
+                    <div>
+                      <b>HTTPS / DNS</b>
+                      <small>mail.30nice.vn</small>
+                    </div>
+                    <span className="label ok">Online</span>
+                  </div>
+                </div>
+                <div className="panel stretch">
+                  <div className="sectionTitle">
+                    <div>
+                      <h2>Trạng thái phát hành</h2>
+                      <p>Production-safe rollout</p>
+                    </div>
+                  </div>
+                  <div className="progress">
+                    <div style={{ width: "70%" }} />
+                  </div>
+                  <div className="percent">
+                    Control plane <b>70%</b>
+                  </div>
+                  <ul className="tasks">
+                    <li>
+                      <CheckCircle2 size={17} /> Tenant persistence
+                    </li>
+                    <li>
+                      <CheckCircle2 size={17} /> Domain verification
+                    </li>
+                    <li>
+                      <CheckCircle2 size={17} /> Mailbox persistence
+                    </li>
+                    <li>
+                      <CheckCircle2 size={17} /> Audit log persistence
+                    </li>
+                    <li>
+                      <CheckCircle2 size={17} /> Mailcow / SMTP adapter
+                    </li>
+                  </ul>
+                </div>
+              </section>
+              <section className="panel">
+                <div className="sectionTitle">
+                  <div>
+                    <h2>Khách hàng</h2>
+                    <p>Đọc trực tiếp từ tenant API</p>
+                  </div>
+                  <button
+                    className="ghost"
+                    onClick={() => setActive("Khách hàng")}
+                  >
+                    Xem chi tiết <ArrowUpRight size={15} />
+                  </button>
+                </div>
+                <CustomerTable data={shown} />
+              </section>
+            </>
+          ) : (
+            <section className="panel">
+              <div className="sectionTitle">
+                <div>
+                  <h2>{active}</h2>
+                  <p>Dữ liệu backend production-safe</p>
+                </div>
+                <span className="label ok">API connected</span>
+              </div>
+              {active === "Tên miền" ? (
+                <>
+                  <DomainWizard />
+                  <DnsHealthPanel />
+                </>
+              ) : active === "Thành viên" ? (
+                <MemberPanel />
+              ) : active === "Hộp thư" ? (
+                <MailboxPanel />
+              ) : active === "Khách hàng" ? (
+                <>
+                  <div className="tools">
+                    <div className="search">
+                      <Search size={16} />
+                      <input
+                        placeholder="Tìm khách hàng hoặc tên miền..."
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                      />
+                    </div>
+                    <select
+                      value={filter}
+                      onChange={(e) => setFilter(e.target.value)}
+                    >
+                      <option>Tất cả</option>
+                      <option>Đã xác minh</option>
+                      <option>Chờ xác minh</option>
+                    </select>
+                  </div>
+                  <CustomerTable data={shown} />
+                </>
+              ) : (
+                <div className="empty">
+                  <AlertTriangle size={26} />
+                  <h3>Module đang được nối dần vào backend</h3>
+                  <p>
+                    Tenant data đã live. Domain và mailbox actions sẽ được mở ở
+                    sprint tiếp theo.
+                  </p>
+                </div>
+              )}
+            </section>
+          )}
+          <footer>
+          30NICE MAIL CLOUD · PRODUCTION · MAILCOW CONNECTED
+          </footer>
+        </div>
+      </main>
+    </div>
+  );
+}
+export default function Home() {
+  return (
+    <AuthGate>
+      <Dashboard />
+    </AuthGate>
+  );
+}
+function CustomerTable({ data }: { data: typeof tenants }) {
+  return (
+    <div className="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>KHÁCH HÀNG</th>
+            <th>TÊN MIỀN</th>
+            <th>MAILBOX DEMO</th>
+            <th>TRẠNG THÁI</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((t, i) => (
+            <tr key={t.domain}>
+              <td>
+                <div className="customer">
+                  <span className="customerIcon">
+                    {i === 0 ? "30" : t.name.charAt(0)}
+                  </span>
+                  <b>{t.name}</b>
+                </div>
+              </td>
+              <td>{t.domain}</td>
+              <td>{t.mailboxes}</td>
+              <td>
+                <span
+                  className={
+                    "label " + (t.status === "Nội bộ" ? "ok" : "neutral")
+                  }
+                >
+                  {t.status}
+                </span>
+              </td>
+            </tr>
+          ))}
+          {data.length === 0 && (
+            <tr>
+              <td colSpan={4}>Không có kết quả</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
