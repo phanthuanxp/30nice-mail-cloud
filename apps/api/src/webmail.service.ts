@@ -84,6 +84,17 @@ export class WebmailService {
     finally { await client.logout().catch(() => undefined); }
   }
 
+  private async resolveFolder(client: ImapFlow, requested: string) {
+    if (!requested || requested.length > 255) throw new BadRequestException('Thư mục không hợp lệ');
+    const folder = (await client.list()).find(item => item.path === requested);
+    if (!folder) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
+    return folder.path;
+  }
+
+  private assertUid(uid: number) {
+    if (!Number.isSafeInteger(uid) || uid < 1) throw new BadRequestException('Thư không hợp lệ');
+  }
+
   private sanitizeMessageHtml(html: string) {
     if (!html) return '';
     return sanitizeHtml(html, {
@@ -150,9 +161,11 @@ export class WebmailService {
       if (filter === 'unread') criteria.seen = false;
       else if (filter === 'starred') criteria.flagged = true;
 
+      const listedFolders = await client.list();
       const folders = folder === '*'
-        ? (await client.list()).filter(item => item.specialUse !== '\\Trash' && item.specialUse !== '\\Junk' && !/^(trash|deleted items|junk|spam|thư rác|thùng rác)$/i.test(item.name))
-        : [{ path: folder }];
+        ? listedFolders.filter(item => item.specialUse !== '\\Trash' && item.specialUse !== '\\Junk' && !/^(trash|deleted items|junk|spam|thư rác|thùng rác)$/i.test(item.name))
+        : listedFolders.filter(item => item.path === folder);
+      if (folder !== '*' && !folders.length) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
       let total = 0;
       const candidates: Array<{ uid: number; folder: string; date: string | null; subject: string; from: Array<{ address: string; name: string }>; to: Array<{ address: string; name: string }>; seen: boolean; flagged: boolean; draft: boolean; size: number }> = [];
       for (const mailbox of folders) {
@@ -181,9 +194,10 @@ export class WebmailService {
   }
 
   async read(token: string | undefined, folder: string, uid: number) {
-    if (!Number.isSafeInteger(uid) || uid < 1) throw new BadRequestException('Thư không hợp lệ');
+    this.assertUid(uid);
     return this.withClient(token, async client => {
-      const lock = await client.getMailboxLock(folder);
+      const mailbox = await this.resolveFolder(client, folder);
+      const lock = await client.getMailboxLock(mailbox);
       try {
         const overview = await client.fetchOne(String(uid), { size: true }, { uid: true });
         if (!overview) throw new BadRequestException('Không tìm thấy thư');
@@ -219,9 +233,11 @@ export class WebmailService {
   }
 
   async attachment(token: string | undefined, folder: string, uid: number, index: number, inline = false) {
-    if (!Number.isSafeInteger(uid) || uid < 1 || !Number.isSafeInteger(index) || index < 0 || index > 100) throw new BadRequestException('Tệp đính kèm không hợp lệ');
+    this.assertUid(uid);
+    if (!Number.isSafeInteger(index) || index < 0 || index > 100) throw new BadRequestException('Tệp đính kèm không hợp lệ');
     return this.withClient(token, async client => {
-      const lock = await client.getMailboxLock(folder, { readOnly: true });
+      const mailbox = await this.resolveFolder(client, folder);
+      const lock = await client.getMailboxLock(mailbox, { readOnly: true });
       try {
         const overview = await client.fetchOne(String(uid), { size: true }, { uid: true });
         if (!overview) throw new BadRequestException('Không tìm thấy thư');
@@ -239,8 +255,10 @@ export class WebmailService {
   }
 
   async setFlag(token: string | undefined, folder: string, uid: number, flag: 'seen' | 'unseen' | 'flagged' | 'unflagged') {
+    this.assertUid(uid);
     return this.withClient(token, async client => {
-      const lock = await client.getMailboxLock(folder);
+      const mailbox = await this.resolveFolder(client, folder);
+      const lock = await client.getMailboxLock(mailbox);
       try {
         const add = flag === 'seen' || flag === 'flagged';
         const imapFlag = flag === 'seen' || flag === 'unseen' ? '\\Seen' : '\\Flagged';
@@ -250,8 +268,10 @@ export class WebmailService {
   }
 
   async moveToTrash(token: string | undefined, folder: string, uid: number) {
+    this.assertUid(uid);
     return this.withClient(token, async client => {
       const folders = await client.list();
+      if (!folders.some(item => item.path === folder)) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
       const trash = folders.find(item => item.specialUse === '\\Trash') || folders.find(item => /^(trash|deleted items|thư đã xóa)$/i.test(item.name));
       if (!trash) throw new BadRequestException('Hộp thư chưa có thư mục Thùng rác');
       const lock = await client.getMailboxLock(folder);
@@ -261,8 +281,10 @@ export class WebmailService {
   }
 
   async moveToArchive(token: string | undefined, folder: string, uid: number) {
+    this.assertUid(uid);
     return this.withClient(token, async client => {
       const folders = await client.list();
+      if (!folders.some(item => item.path === folder)) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
       const archive = folders.find(item => item.specialUse === '\\Archive') || folders.find(item => /^(archive|archived|lưu trữ)$/i.test(item.name));
       if (!archive) throw new BadRequestException('Hộp thư chưa có thư mục Lưu trữ');
       const lock = await client.getMailboxLock(folder);
@@ -272,8 +294,10 @@ export class WebmailService {
   }
 
   async moveToInbox(token: string | undefined, folder: string, uid: number) {
+    this.assertUid(uid);
     return this.withClient(token, async client => {
       const folders = await client.list();
+      if (!folders.some(item => item.path === folder)) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
       const inbox = folders.find(item => item.specialUse === '\\Inbox') || folders.find(item => item.path.toUpperCase() === 'INBOX');
       if (!inbox) throw new BadRequestException('Không tìm thấy thư mục Hộp thư đến');
       const lock = await client.getMailboxLock(folder);
