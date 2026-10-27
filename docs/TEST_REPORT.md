@@ -16,7 +16,16 @@
 
 ## Scope confirmation
 
-No DNS/MX change, real mailbox provisioning, real email sending, or production secret handling was performed. The previously approved demo deployment is on the VPS; Mailcow remains disconnected.
+The original local-first phase did not change DNS/MX or handle production secrets. A later explicit deployment approval enabled the VPS integration; the current production health check confirms Mailcow is connected. End-to-end real email delivery and external provider deliverability are not claimed without dedicated tests.
+
+## Production integration verification (2026-10-27)
+
+- `npm run typecheck` — PASS for Portal and API.
+- `npm run build` and `npm run build:api` — PASS.
+- VPS `GET /health` — PASS: `productionReady:true`, PostgreSQL connected, Mailcow configured/healthy with HTTP 200.
+- `https://admin.30nice.vn` — PASS: HTTP 200 after PM2 restart.
+- GitHub/VPS deployment — PASS at commit `be8098e`.
+- Mailcow create/update mailbox calls are server-side and use bounded request timeouts; destructive delivery and Gmail/Outlook deliverability tests remain unverified.
 
 ## Sprint 1 limitation
 

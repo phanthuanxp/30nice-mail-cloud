@@ -17,3 +17,11 @@
 - Data is intentionally in-memory until PostgreSQL migrations are introduced; restart resets fixtures.
 - Restricted tenant listing and audit log access by role; tenant admins can only list their scoped tenant.
 - Added PostgreSQL/Redis production compose foundation and initial relational schema migration; not enabled for the API until a controlled data migration step.
+
+## 2026-10-27 — Production integration milestones
+
+- Added server-side session authentication, tenant-scoped authorization and tenant member provisioning.
+- Connected the API to PostgreSQL and Mailcow production through server-only credentials; no Mailcow key is sent to the browser.
+- Added domain/mailbox provisioning, DNS health checks and mailbox update/disable synchronization with Mailcow.
+- Added Vietnamese control-plane login, domain/DNS wizard, member management and mailbox management UI.
+- Verified GitHub commit `be8098e` on VPS: API health reports `productionReady: true`, PostgreSQL connected and Mailcow HTTP 200.
