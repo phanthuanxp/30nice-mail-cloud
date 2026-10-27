@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { Archive, ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File, Flag, Inbox, LogOut, Mail, MailOpen, Menu, MoreHorizontal, Paperclip, PenLine, Plus, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Star, Trash2, Users, X } from 'lucide-react';
+import { Archive, ArrowLeft, Check, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File, Inbox, LogOut, Mail, MailOpen, Menu, MoreHorizontal, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Trash2, X } from 'lucide-react';
 
 type Folder = { path: string; name: string; specialUse: string | null; messages: number; unread: number };
 type Address = { address: string; name: string };
@@ -33,6 +33,9 @@ export default function WebmailClient() {
   const [items, setItems] = useState<MailItem[]>([]);
   const [selected, setSelected] = useState<Message | null>(null);
   const [query, setQuery] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [listFilter, setListFilter] = useState<'all' | 'unread' | 'starred'>('all');
+  const [selectedUids, setSelectedUids] = useState<Set<number>>(new Set());
   const [compose, setCompose] = useState<Compose | null>(null);
   const [showCc, setShowCc] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
@@ -50,14 +53,15 @@ export default function WebmailClient() {
   const loadFolders = useCallback(async () => {
     const data = await request('/folders') as Folder[];
     setFolders(data);
-    if (data.length && !data.some(item => item.path === folder)) setFolder(data.find(item => item.specialUse === '\\Inbox')?.path || data[0].path);
-  }, [folder, request]);
+    if (data.length) setFolder(current => data.some(item => item.path === current) ? current : data.find(item => item.specialUse === '\\Inbox')?.path || data[0].path);
+  }, [request]);
 
   const loadMessages = useCallback(async (activeFolder = folder, search = query) => {
     setBusy(true);
     try {
       const data = await request(`/messages?folder=${encodeURIComponent(activeFolder)}&q=${encodeURIComponent(search)}`) as { messages: MailItem[] };
       setItems(data.messages);
+      setSelectedUids(new Set());
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không tải được danh sách thư.'); }
     finally { setBusy(false); }
   }, [folder, query, request]);
@@ -69,8 +73,11 @@ export default function WebmailClient() {
 
   useEffect(() => { void enterMailbox(); }, [enterMailbox]);
   useEffect(() => { if (authenticated) void loadMessages(folder, query); }, [authenticated, folder, query, loadMessages]);
+  useEffect(() => { const timer = window.setTimeout(() => setQuery(searchInput), 350); return () => window.clearTimeout(timer); }, [searchInput]);
 
   const unreadCount = useMemo(() => folders.reduce((sum, item) => sum + item.unread, 0), [folders]);
+  const visibleItems = useMemo(() => items.filter(item => listFilter === 'unread' ? !item.seen : listFilter === 'starred' ? item.flagged : true), [items, listFilter]);
+  const allVisibleSelected = visibleItems.length > 0 && visibleItems.every(item => selectedUids.has(item.uid));
 
   async function signIn(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
@@ -109,6 +116,26 @@ export default function WebmailClient() {
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Không chuyển được thư vào thùng rác.'); }
   }
 
+  async function bulkUpdate(flag: 'seen' | 'unseen') {
+    const targets = items.filter(item => selectedUids.has(item.uid));
+    if (!targets.length) return;
+    try {
+      await Promise.all(targets.map(item => request(`/messages/${item.uid}/flags`, { method: 'POST', body: JSON.stringify({ folder, flag }) })));
+      setItems(current => current.map(item => selectedUids.has(item.uid) ? { ...item, seen: flag === 'seen' } : item));
+      setSelectedUids(new Set());
+      void loadFolders();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không cập nhật được các thư đã chọn.'); }
+  }
+
+  async function bulkDelete() {
+    const targets = items.filter(item => selectedUids.has(item.uid));
+    if (!targets.length) return;
+    try {
+      await Promise.all(targets.map(item => request(`/messages/${item.uid}/trash`, { method: 'POST', body: JSON.stringify({ folder }) })));
+      setSelectedUids(new Set()); setSelected(null); await loadMessages(); await loadFolders();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không chuyển được các thư đã chọn vào thùng rác.'); }
+  }
+
   async function sendMessage(event: FormEvent) {
     event.preventDefault(); if (!compose) return; setBusy(true); setError('');
     try {
@@ -131,7 +158,7 @@ export default function WebmailClient() {
     <header className="wm-topbar">
       <button className="wm-icon-btn wm-mobile-menu" aria-label="Mở điều hướng" onClick={() => setMobileNav(!mobileNav)}><Menu size={21} /></button>
       <div className="wm-logo"><div className="wm-brand-mark"><Mail size={22} /></div><span>30NICE <b>Mail</b></span></div>
-      <form className="wm-search" onSubmit={event => { event.preventDefault(); void loadMessages(folder, query); }}><Search size={20} /><input aria-label="Tìm kiếm thư" placeholder="Tìm trong thư" value={query} onChange={event => setQuery(event.target.value)} /><button aria-label="Tìm kiếm"><Search size={17} /></button></form>
+      <form className="wm-search" onSubmit={event => { event.preventDefault(); setQuery(searchInput); void loadMessages(folder, searchInput); }}><Search size={20} /><input aria-label="Tìm kiếm thư" placeholder="Tìm trong thư" value={searchInput} onChange={event => setSearchInput(event.target.value)} /><button aria-label="Tìm kiếm"><Search size={17} /></button></form>
       <div className="wm-top-actions"><button className="wm-icon-btn wm-help" aria-label="Trợ giúp"><CircleHelp size={19} /></button><div className="wm-user-chip"><span className="wm-avatar wm-avatar-small">{initials(account)}</span><span className="wm-user-email">{account}</span><ChevronDown size={15} /></div><button className="wm-icon-btn wm-logout" aria-label="Đăng xuất" title="Đăng xuất" onClick={() => void signOut()}><LogOut size={18} /></button></div>
     </header>
     <div className="wm-layout">
@@ -146,11 +173,10 @@ export default function WebmailClient() {
         {error && <div className="wm-inline-alert"><span>{error}</span><button aria-label="Đóng" onClick={() => setError('')}><X size={16} /></button></div>}
         <section className={`wm-mail-panel ${selected ? 'wm-reading' : ''}`}>
           <div className="wm-toolbar">
-            <div className="wm-toolbar-left">{selected ? <button className="wm-icon-btn" aria-label="Quay lại danh sách" onClick={() => setSelected(null)}><ArrowLeft size={19} /></button> : <button className="wm-icon-btn" aria-label="Chọn thư" onClick={() => void loadMessages()}><RefreshCw size={17} /></button>}
-              {!selected && <><button className="wm-icon-btn wm-hide-small" aria-label="Đánh dấu đã đọc" onClick={() => items[0] && void updateFlag(items[0], 'seen')}><MailOpen size={17} /></button><button className="wm-icon-btn wm-hide-small" aria-label="Tùy chọn khác"><MoreHorizontal size={19} /></button></>}</div>
-            <div className="wm-toolbar-right">{selected ? <><button className="wm-icon-btn" title="Đánh dấu sao" aria-label="Đánh dấu sao" onClick={() => void updateFlag(selected, selected.flagged ? 'unflagged' : 'flagged')}><Star size={18} fill={selected.flagged ? 'currentColor' : 'none'} /></button><button className="wm-icon-btn" title="Xóa thư" aria-label="Xóa thư" onClick={() => void deleteMessage(selected)}><Trash2 size={18} /></button><button className="wm-icon-btn" title="Thư trước" aria-label="Thư trước" onClick={() => setSelected(null)}><ChevronLeft size={19} /></button><button className="wm-icon-btn" title="Danh sách thư" aria-label="Danh sách thư" onClick={() => setSelected(null)}><ChevronRight size={19} /></button></> : <><span>{items.length ? `1–${items.length}` : '0 thư'}{unreadCount ? ` · ${unreadCount} chưa đọc` : ''}</span><button className="wm-icon-btn" aria-label="Thư mới hơn" disabled><ChevronLeft size={19} /></button><button className="wm-icon-btn" aria-label="Thư cũ hơn" disabled><ChevronRight size={19} /></button></>}</div>
+            <div className="wm-toolbar-left">{selected ? <button className="wm-icon-btn" aria-label="Quay lại danh sách" onClick={() => setSelected(null)}><ArrowLeft size={19} /></button> : <><button className="wm-icon-btn" aria-label={allVisibleSelected ? 'Bỏ chọn thư' : 'Chọn tất cả thư'} onClick={() => setSelectedUids(allVisibleSelected ? new Set() : new Set(visibleItems.map(item => item.uid)))}>{allVisibleSelected ? <CheckSquare size={17} /> : <Square size={17} />}</button><button className="wm-icon-btn" aria-label="Làm mới" onClick={() => void loadMessages()}><RefreshCw size={17} /></button>{selectedUids.size > 0 && <><span className="wm-selected-count">Đã chọn {selectedUids.size}</span><button className="wm-icon-btn" aria-label="Đánh dấu đã đọc" title="Đánh dấu đã đọc" onClick={() => void bulkUpdate('seen')}><MailOpen size={17} /></button><button className="wm-icon-btn" aria-label="Chuyển vào thùng rác" title="Chuyển vào thùng rác" onClick={() => void bulkDelete()}><Trash2 size={17} /></button></>}</>}</div>
+            <div className="wm-toolbar-right">{selected ? <><button className="wm-icon-btn" title="Đánh dấu sao" aria-label="Đánh dấu sao" onClick={() => void updateFlag(selected, selected.flagged ? 'unflagged' : 'flagged')}><Star size={18} fill={selected.flagged ? 'currentColor' : 'none'} /></button><button className="wm-icon-btn" title="Xóa thư" aria-label="Xóa thư" onClick={() => void deleteMessage(selected)}><Trash2 size={18} /></button><button className="wm-icon-btn" title="Thư trước" aria-label="Thư trước" onClick={() => setSelected(null)}><ChevronLeft size={19} /></button><button className="wm-icon-btn" title="Danh sách thư" aria-label="Danh sách thư" onClick={() => setSelected(null)}><ChevronRight size={19} /></button></> : <><span>{visibleItems.length ? `1–${visibleItems.length}` : '0 thư'}{unreadCount ? ` · ${unreadCount} chưa đọc` : ''}</span><button className="wm-icon-btn" aria-label="Thư mới hơn" disabled><ChevronLeft size={19} /></button><button className="wm-icon-btn" aria-label="Thư cũ hơn" disabled><ChevronRight size={19} /></button></>}</div>
           </div>
-          {selected ? <article className="wm-reader"><div className="wm-reader-title"><h1>{selected.subject}</h1><span className="wm-inbox-tag">{folderLabel(folders.find(item => item.path === selected.folder) || { path: selected.folder, name: selected.folder, specialUse: null, messages: 0, unread: 0 })}</span></div><div className="wm-message-head"><div className="wm-avatar">{initials(person(selected.from[0]))}</div><div className="wm-sender"><b>{person(selected.from[0])}</b><small>{selected.from[0]?.address}{selected.to.length ? ` · đến ${selected.to.map(person).join(', ')}` : ''}</small></div><time>{selected.date ? new Date(selected.date).toLocaleString('vi-VN', { dateStyle: 'medium', timeStyle: 'short' }) : ''}</time><button className="wm-icon-btn" aria-label="Trả lời" onClick={() => replyTo(selected)}><Reply size={18} /></button></div>{selected.cc && <div className="wm-cc-line">CC: {selected.cc}</div>}<div className="wm-message-body">{selected.html ? <iframe title="Nội dung email" sandbox="" referrerPolicy="no-referrer" srcDoc={selected.html} /> : <pre>{selected.text || '(Thư không có nội dung văn bản)'}</pre>}</div>{selected.attachments.length > 0 && <div className="wm-attachments"><b>{selected.attachments.length} tệp đính kèm</b><div>{selected.attachments.map((file, index) => <span key={`${file.filename}-${index}`}><Paperclip size={15} />{file.filename}<small>{formatBytes(file.size)}</small></span>)}</div></div>}<button className="wm-reply-button" onClick={() => replyTo(selected)}><Reply size={17} /> Trả lời</button></article> : <><div className="wm-list-heading"><div><h1>{folderLabel(folders.find(item => item.path === folder) || { path: folder, name: folder, specialUse: null, messages: 0, unread: 0 })}</h1><p>{query ? `Kết quả tìm kiếm: “${query}”` : 'Thư của bạn, được đồng bộ tức thì'}</p></div><button className="wm-filter-btn"><Users size={16} /> Tất cả thư <ChevronDown size={15} /></button></div><div className="wm-tabs"><button className="active"><Inbox size={17} /> Chính</button><button><Users size={17} /> Mạng xã hội</button><button><Flag size={17} /> Khuyến mãi</button></div><div className="wm-message-list">{busy && items.length === 0 ? <div className="wm-list-empty">Đang tải thư…</div> : items.length === 0 ? <div className="wm-empty"><div><Inbox size={31} /></div><h2>{query ? 'Không tìm thấy thư phù hợp' : 'Hộp thư đang trống'}</h2><p>{query ? 'Thử tìm bằng tên người gửi hoặc tiêu đề khác.' : 'Khi có thư mới, thư sẽ xuất hiện tại đây.'}</p></div> : items.map(item => <div className={`wm-message-row ${item.seen ? '' : 'unread'}`} key={`${folder}-${item.uid}`} onClick={() => void openMessage(item)} onKeyDown={event => { if (event.key === 'Enter') void openMessage(item); }} role="button" tabIndex={0}><button className="wm-star-btn" aria-label={item.flagged ? 'Bỏ đánh dấu sao' : 'Đánh dấu sao'} onClick={event => { event.stopPropagation(); void updateFlag(item, item.flagged ? 'unflagged' : 'flagged'); }}><Star size={17} fill={item.flagged ? 'currentColor' : 'none'} /></button><span className="wm-sender-name">{person(item.from[0])}</span><span className="wm-subject-line"><b>{item.subject}</b><span className="wm-preview"> — {item.to.length ? `Đến ${item.to.map(person).join(', ')}` : 'Thư điện tử'}{item.size ? ` · ${formatBytes(item.size)}` : ''}</span></span><time>{shortDate(item.date)}</time></div>)}</div></>}
+          {selected ? <article className="wm-reader"><div className="wm-reader-title"><h1>{selected.subject}</h1><span className="wm-inbox-tag">{folderLabel(folders.find(item => item.path === selected.folder) || { path: selected.folder, name: selected.folder, specialUse: null, messages: 0, unread: 0 })}</span></div><div className="wm-message-head"><div className="wm-avatar">{initials(person(selected.from[0]))}</div><div className="wm-sender"><b>{person(selected.from[0])}</b><small>{selected.from[0]?.address}{selected.to.length ? ` · đến ${selected.to.map(person).join(', ')}` : ''}</small></div><time>{selected.date ? new Date(selected.date).toLocaleString('vi-VN', { dateStyle: 'medium', timeStyle: 'short' }) : ''}</time><button className="wm-icon-btn" aria-label="Trả lời" onClick={() => replyTo(selected)}><Reply size={18} /></button></div>{selected.cc && <div className="wm-cc-line">CC: {selected.cc}</div>}<div className="wm-message-body">{selected.html ? <iframe title="Nội dung email" sandbox="" referrerPolicy="no-referrer" srcDoc={selected.html} /> : <pre>{selected.text || '(Thư không có nội dung văn bản)'}</pre>}</div>{selected.attachments.length > 0 && <div className="wm-attachments"><b>{selected.attachments.length} tệp đính kèm</b><div>{selected.attachments.map((file, index) => <span key={`${file.filename}-${index}`}><Paperclip size={15} />{file.filename}<small>{formatBytes(file.size)}</small></span>)}</div></div>}<button className="wm-reply-button" onClick={() => replyTo(selected)}><Reply size={17} /> Trả lời</button></article> : <><div className="wm-list-heading"><div><h1>{folderLabel(folders.find(item => item.path === folder) || { path: folder, name: folder, specialUse: null, messages: 0, unread: 0 })}</h1><p>{query ? `Kết quả tìm kiếm: “${query}”` : 'Thư của bạn, được đồng bộ tức thì'}</p></div><span className="wm-filter-context">{listFilter === 'unread' ? 'Chưa đọc' : listFilter === 'starred' ? 'Có gắn sao' : 'Tất cả thư'}</span></div><div className="wm-tabs"><button className={listFilter === 'all' ? 'active' : ''} onClick={() => setListFilter('all')}><Inbox size={17} /> Tất cả thư</button><button className={listFilter === 'unread' ? 'active' : ''} onClick={() => setListFilter('unread')}><MailOpen size={17} /> Chưa đọc</button><button className={listFilter === 'starred' ? 'active' : ''} onClick={() => setListFilter('starred')}><Star size={17} /> Có gắn sao</button></div><div className="wm-message-list">{busy && items.length === 0 ? <div className="wm-list-empty">Đang tải thư…</div> : visibleItems.length === 0 ? <div className="wm-empty"><div><Inbox size={31} /></div><h2>{query ? 'Không tìm thấy thư phù hợp' : listFilter !== 'all' ? 'Không có thư phù hợp' : 'Hộp thư đang trống'}</h2><p>{query ? 'Thử tìm bằng tên người gửi hoặc tiêu đề khác.' : listFilter !== 'all' ? 'Chọn bộ lọc khác để xem thư.' : 'Khi có thư mới, thư sẽ xuất hiện tại đây.'}</p></div> : visibleItems.map(item => <div className={`wm-message-row ${item.seen ? '' : 'unread'} ${selectedUids.has(item.uid) ? 'wm-row-selected' : ''}`} key={`${folder}-${item.uid}`} onClick={() => void openMessage(item)} onKeyDown={event => { if (event.key === 'Enter') void openMessage(item); }} role="button" tabIndex={0}><button className="wm-select-btn" aria-label={selectedUids.has(item.uid) ? 'Bỏ chọn thư' : 'Chọn thư'} onClick={event => { event.stopPropagation(); setSelectedUids(current => { const next = new Set(current); if (next.has(item.uid)) next.delete(item.uid); else next.add(item.uid); return next; }); }}>{selectedUids.has(item.uid) ? <CheckSquare size={17} /> : <Square size={17} />}</button><button className="wm-star-btn" aria-label={item.flagged ? 'Bỏ đánh dấu sao' : 'Đánh dấu sao'} onClick={event => { event.stopPropagation(); void updateFlag(item, item.flagged ? 'unflagged' : 'flagged'); }}><Star size={17} fill={item.flagged ? 'currentColor' : 'none'} /></button><span className="wm-sender-name">{person(item.from[0])}</span><span className="wm-subject-line"><b>{item.subject}</b><span className="wm-preview"> — {item.to.length ? `Đến ${item.to.map(person).join(', ')}` : 'Thư điện tử'}{item.size ? ` · ${formatBytes(item.size)}` : ''}</span></span><time>{shortDate(item.date)}</time></div>)}</div></>}
         </section>
       </main>
     </div>

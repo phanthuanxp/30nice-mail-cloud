@@ -26,6 +26,8 @@ export class WebmailService {
     if (!/^\S+@\S+\.\S+$/.test(email) || !password || password.length > 256) throw new BadRequestException('Vui lòng nhập email và mật khẩu hợp lệ');
     const key = `${sourceIp}:${email}`;
     const now = Date.now();
+    for (const [token, session] of this.sessions) if (session.expiresAt <= now) this.sessions.delete(token);
+    for (const [attemptKey, value] of this.attempts) if (value.resetAt <= now) this.attempts.delete(attemptKey);
     const attempt = this.attempts.get(key);
     if (attempt && attempt.resetAt > now && attempt.count >= 8) throw new HttpException('Đăng nhập tạm khóa. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
     const window = !attempt || attempt.resetAt <= now ? { count: 0, resetAt: now + 15 * 60_000 } : attempt;
@@ -102,6 +104,9 @@ export class WebmailService {
     return this.withClient(token, async client => {
       const lock = await client.getMailboxLock(folder);
       try {
+        const overview = await client.fetchOne(String(uid), { size: true }, { uid: true });
+        if (!overview) throw new BadRequestException('Không tìm thấy thư');
+        if ((overview.size || 0) > 15 * 1024 * 1024) throw new BadRequestException('Thư lớn hơn 15 MB. Vui lòng mở thư bằng ứng dụng email hỗ trợ tệp lớn.');
         const message = await client.fetchOne(String(uid), { source: true, envelope: true, flags: true }, { uid: true });
         if (!message || !message.source) throw new BadRequestException('Không tìm thấy thư');
         const parsed = await simpleParser(message.source);
