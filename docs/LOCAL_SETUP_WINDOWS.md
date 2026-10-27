@@ -11,6 +11,7 @@
 ## Current toolchain requirement
 
 - The current NestJS 12 CLI toolchain requires Node.js `22.22.3+` on the 22.x line or `24.15.0+` on the 24.x line. The recorded local baseline `24.14.1` is one patch below that supported range; upgrade Node before running the latest CLI locally.
+- Production Mail Cloud uses its own verified Node.js `22.23.4` runtime under `/opt/30nice-mail-cloud-runtime`; other VPS applications continue using the system Node installation.
 
 ## Commands
 
