@@ -175,6 +175,28 @@ export class WebmailService {
     });
   }
 
+  async moveToArchive(token: string | undefined, folder: string, uid: number) {
+    return this.withClient(token, async client => {
+      const folders = await client.list();
+      const archive = folders.find(item => item.specialUse === '\\Archive') || folders.find(item => /^(archive|archived|lưu trữ)$/i.test(item.name));
+      if (!archive) throw new BadRequestException('Hộp thư chưa có thư mục Lưu trữ');
+      const lock = await client.getMailboxLock(folder);
+      try { return await client.messageMove(uid, archive.path, { uid: true }); }
+      finally { lock.release(); }
+    });
+  }
+
+  async moveToInbox(token: string | undefined, folder: string, uid: number) {
+    return this.withClient(token, async client => {
+      const folders = await client.list();
+      const inbox = folders.find(item => item.specialUse === '\\Inbox') || folders.find(item => item.path.toUpperCase() === 'INBOX');
+      if (!inbox) throw new BadRequestException('Không tìm thấy thư mục Hộp thư đến');
+      const lock = await client.getMailboxLock(folder);
+      try { return await client.messageMove(uid, inbox.path, { uid: true }); }
+      finally { lock.release(); }
+    });
+  }
+
   async send(token: string | undefined, input: { to?: string; cc?: string; subject?: string; text?: string }, files: Array<{ buffer: Buffer; filename: string; contentType: string }> = []) {
     const session = this.session(token);
     const to = (input.to || '').split(',').map(value => value.trim()).filter(Boolean);
