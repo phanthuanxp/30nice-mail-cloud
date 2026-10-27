@@ -12,6 +12,7 @@ export class MailcowService {
     catch { return {mode:this.mode,healthy:false,configured:true}; }
   }
   private async request(path:string,body:Record<string,unknown>){
+    if(this.mode==='mock') return [{type:'success',msg:'mock'}];
     if(this.mode==='dry-run') return [{type:'success',msg:'dry-run'}];
     if(!this.baseUrl||!this.apiKey) throw new Error('Mailcow API is not configured');
     const response=await fetch(`${this.baseUrl}${path}`,{method:'POST',headers:{'Content-Type':'application/json','X-API-Key':this.apiKey},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});
@@ -22,6 +23,18 @@ export class MailcowService {
     return result;
   }
   async addDomain(domain:string){return this.request('/api/v1/add/domain',{domain,description:'Managed by 30NICE Mail Cloud',aliases:0,mailboxes:0,quota:0,defquota:3072,maxquota:10240,relay_all_recipients:0,relay_unknown_only:0,backupmx:0,gal:0,active:1});}
+  async ensureDomain(domain:string){
+    if(this.mode==='mock'||this.mode==='dry-run') return this.addDomain(domain);
+    if(!this.baseUrl||!this.apiKey) throw new Error('Mailcow API is not configured');
+    const response=await fetch(`${this.baseUrl}/api/v1/get/domain/all`,{headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(10000)});
+    if(!response.ok) throw new Error(`Mailcow API HTTP ${response.status}`);
+    const result=await response.json().catch(()=>null);
+    if(!Array.isArray(result)) throw new Error('Mailcow returned an invalid domain list');
+    const exists=result.some((item:{domain_name?:string;domain?:string}|null)=>
+      (item?.domain_name??item?.domain)?.toLowerCase()===domain.toLowerCase(),
+    );
+    return exists?[{type:'success',msg:'Domain already exists'}]:this.addDomain(domain);
+  }
   async addMailbox(domain:string,localPart:string,quotaGb:number,password:string){return this.request('/api/v1/add/mailbox',{local_part:localPart,domain,password,password2:password,quota:quotaGb*1024,active:1});}
   async editMailbox(address:string,quotaGb?:number,status?:'active'|'disabled'){return this.request('/api/v1/edit/mailbox',{username:address,quota:quotaGb===undefined?undefined:quotaGb*1024,active:status==='disabled'?0:1});}
 }
