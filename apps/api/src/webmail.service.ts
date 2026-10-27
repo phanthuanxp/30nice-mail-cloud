@@ -118,7 +118,26 @@ export class WebmailService {
         const to = toHeader.map(value => ({ address: value.address || '', name: value.name || '' }));
         const ccValues = Array.isArray(parsed.cc) ? parsed.cc.flatMap(value => value.value) : parsed.cc?.value || [];
         const cc = ccValues.map(value => value.address || value.name || '').join(', ');
-        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, date: parsed.date ? new Date(parsed.date).toISOString() : null, text: parsed.text || '', html: safeHtml, attachments: (parsed.attachments || []).map(item => ({ filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
+        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, size: message.source.length, text: parsed.text || '', html: safeHtml, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
+      } finally { lock.release(); }
+    });
+  }
+
+  async attachment(token: string | undefined, folder: string, uid: number, index: number) {
+    if (!Number.isSafeInteger(uid) || uid < 1 || !Number.isSafeInteger(index) || index < 0 || index > 100) throw new BadRequestException('Tệp đính kèm không hợp lệ');
+    return this.withClient(token, async client => {
+      const lock = await client.getMailboxLock(folder, { readOnly: true });
+      try {
+        const overview = await client.fetchOne(String(uid), { size: true }, { uid: true });
+        if (!overview) throw new BadRequestException('Không tìm thấy thư');
+        if ((overview.size || 0) > 15 * 1024 * 1024) throw new BadRequestException('Email lớn hơn giới hạn tải tệp 15 MB');
+        const message = await client.fetchOne(String(uid), { source: true }, { uid: true });
+        if (!message || !message.source) throw new BadRequestException('Không tìm thấy thư');
+        const parsed = await simpleParser(message.source);
+        const file = parsed.attachments[index];
+        if (!file) throw new BadRequestException('Không tìm thấy tệp đính kèm');
+        const filename = (file.filename || 'tep-dinh-kem').replace(/[\r\n"\\/]/g, '_').slice(0, 180);
+        return { content: file.content, filename, contentType: file.contentType || 'application/octet-stream' };
       } finally { lock.release(); }
     });
   }
@@ -165,3 +184,4 @@ export class WebmailService {
     finally { transport.close(); }
   }
 }
+
