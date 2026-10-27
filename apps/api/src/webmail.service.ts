@@ -2,7 +2,7 @@ import { Injectable, UnauthorizedException, BadRequestException, HttpException, 
 import { ImapFlow } from 'imapflow';
 import nodemailer from 'nodemailer';
 import { simpleParser } from 'mailparser';
-import sanitizeHtml from 'sanitize-html';
+import sanitizeHtml = require('sanitize-html');
 import { randomBytes } from 'node:crypto';
 
 type WebmailSession = { email: string; password: string; expiresAt: number };
@@ -193,6 +193,17 @@ export class WebmailService {
         const parsed = await simpleParser(message.source);
         if (!message.flags?.has('\\Seen')) await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true });
         const safeHtml = this.sanitizeMessageHtml(typeof parsed.html === 'string' ? parsed.html : '');
+        const inlineContent = new Map<string, number>();
+        (parsed.attachments || []).forEach((attachment, index) => {
+          const contentId = String(attachment.contentId || '').replace(/^<|>$/g, '').trim().toLowerCase();
+          if (contentId) inlineContent.set(contentId, index);
+        });
+        const html = safeHtml.replace(/\bsrc=(['"])cid:([^'"]+)\1/gi, (match, quote: string, rawContentId: string) => {
+          let contentId = rawContentId;
+          try { contentId = decodeURIComponent(contentId); } catch { /* Keep the original content ID. */ }
+          const index = inlineContent.get(contentId.replace(/&amp;/gi, '&').replace(/^<|>$/g, '').trim().toLowerCase());
+          return index === undefined ? '' : `src="/api/api/v1/webmail/messages/${uid}/attachments/${index}?folder=${encodeURIComponent(folder)}&inline=1"`;
+        });
         const fromValues = parsed.from?.value || [];
         const toHeader = Array.isArray(parsed.to) ? parsed.to.flatMap(value => value.value) : parsed.to?.value || [];
         const from = fromValues.map(value => ({ address: value.address || '', name: value.name || '' }));
@@ -202,12 +213,12 @@ export class WebmailService {
         const cc = ccAddresses.map(value => value.address || value.name).join(', ');
         const draftIdHeader = parsed.headers.get('x-30nice-draft-id');
         const draftId = typeof draftIdHeader === 'string' ? draftIdHeader : undefined;
-        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, draftId, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, draft: message.flags?.has('\\Draft') || false, size: message.source.length, text: parsed.text || '', html: safeHtml, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
+        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, draftId, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, draft: message.flags?.has('\\Draft') || false, size: message.source.length, text: parsed.text || '', html, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
       } finally { lock.release(); }
     });
   }
 
-  async attachment(token: string | undefined, folder: string, uid: number, index: number) {
+  async attachment(token: string | undefined, folder: string, uid: number, index: number, inline = false) {
     if (!Number.isSafeInteger(uid) || uid < 1 || !Number.isSafeInteger(index) || index < 0 || index > 100) throw new BadRequestException('Tệp đính kèm không hợp lệ');
     return this.withClient(token, async client => {
       const lock = await client.getMailboxLock(folder, { readOnly: true });
@@ -220,6 +231,7 @@ export class WebmailService {
         const parsed = await simpleParser(message.source);
         const file = parsed.attachments[index];
         if (!file) throw new BadRequestException('Không tìm thấy tệp đính kèm');
+        if (inline && !/^image\/(?:png|jpeg|gif|webp|avif)$/i.test(file.contentType || '')) throw new BadRequestException('Chỉ cho phép hiển thị ảnh an toàn trong nội dung thư');
         const filename = (file.filename || 'tep-dinh-kem').replace(/[\r\n"\\/]/g, '_').slice(0, 180);
         return { content: file.content, filename, contentType: file.contentType || 'application/octet-stream' };
       } finally { lock.release(); }
