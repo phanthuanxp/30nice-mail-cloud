@@ -20,6 +20,6 @@ export class MailcowService {
     if(Array.isArray(result)&&result.some((item:{type?:string})=>item.type==='danger')) throw new Error('Mailcow rejected the provisioning request');
     return result;
   }
-  async addDomain(domain:string){return this.request('/api/v1/add/domain',{domain,description:'Managed by 30NICE Mail Cloud',aliases:0,mailboxes:0,quota:0,defquota:3072,maxquota:10240,realy:1});}
+  async addDomain(domain:string){return this.request('/api/v1/add/domain',{domain,description:'Managed by 30NICE Mail Cloud',aliases:0,mailboxes:0,quota:0,defquota:3072,maxquota:10240,relay_all_recipients:0,relay_unknown_only:0,backupmx:0,gal:0,active:1});}
   async addMailbox(domain:string,localPart:string,quotaGb:number,password:string){return this.request('/api/v1/add/mailbox',{local_part:localPart,domain,password,quota:quotaGb,active:1});}
 }
