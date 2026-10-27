@@ -26,6 +26,7 @@ The original local-first phase did not change DNS/MX or handle production secret
 - `https://admin.30nice.vn` — PASS: HTTP 200 after PM2 restart.
 - GitHub/VPS deployment — PASS at commit `be8098e`.
 - Mailcow create/update mailbox calls are server-side and use bounded request timeouts; destructive delivery and Gmail/Outlook deliverability tests remain unverified.
+- Mailcow dry-run smoke test — PASS: `MAIL_ADAPTER_MODE=dry-run` returned dry-run success for domain and mailbox operations without requiring an API URL or key.
 
 ## Sprint 1 limitation
 
