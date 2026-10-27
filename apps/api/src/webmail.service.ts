@@ -189,7 +189,7 @@ export class WebmailService {
     if (text.length > 50_000) throw new BadRequestException('Nội dung thư vượt quá giới hạn 50 KB');
     const port = Number(process.env.MAILCOW_SMTP_PORT || 465);
     const messageOptions = { from: session.email, to, cc: cc.length ? cc : undefined, subject, text, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } };
-    const renderer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'unix' });
+    const renderer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'windows' });
     const transport = nodemailer.createTransport({ host: this.smtpHost, port, secure: port === 465, auth: { user: session.email, pass: session.password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 });
     try {
       const rendered = await renderer.sendMail(messageOptions);
