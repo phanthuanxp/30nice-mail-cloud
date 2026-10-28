@@ -34,7 +34,7 @@ async function main() {
   assert.equal(fetchedUids.length, 300, 'only a bounded set of recent message headers is scanned');
   assert.equal(fetchedUids[0], 350, 'most recent UIDs are examined first');
   assert.deepEqual(contacts.map(contact => contact.address), [
-    'bob@example.test', 'alice@example.test', 'team@example.test',
+    'alice@example.test', 'bob@example.test', 'team@example.test',
   ]);
   assert.equal(contacts.find(contact => contact.address === 'alice@example.test').name, 'Alice Nguyen');
   assert.ok(!contacts.some(contact => contact.address === 'user@example.test'));
