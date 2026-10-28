@@ -359,10 +359,16 @@ export default function WebmailClient() {
         const failedList = [...rejectedTo, ...rejectedCc, ...rejectedBcc];
         const shown = failedList.slice(0, 4).join(', ');
         const suffix = failedList.length > 4 ? ` và ${failedList.length - 4} địa chỉ khác` : '';
-        setCompose({ ...compose, draftId: crypto.randomUUID(), replaceUid: undefined, to: rejectedTo.join(', '), cc: rejectedCc.join(', '), bcc: rejectedBcc.join(', ') });
-        setShowCc(rejectedCc.length > 0); setShowBcc(rejectedBcc.length > 0);
-        setDraftStatus(`Đã gửi một phần; kiểm tra ô Đến/CC/BCC để gửi lại ${failedList.length} địa chỉ bị từ chối.`);
-        setNotice(`Đã gửi cho ${result.accepted.length}/${result.accepted.length + result.rejected.length} người nhận. Đã giữ lại địa chỉ bị từ chối để anh gửi lại: ${shown}${suffix}.${!result.draftRemoved ? ' Bản nháp cũ vẫn còn nguyên danh sách ban đầu; không gửi lại bản đó để tránh gửi trùng.' : ''}`);
+        const hasAcceptedRecipients = result.accepted.length > 0;
+        const retryTo = failedList.length ? rejectedTo.join(', ') : (!hasAcceptedRecipients ? compose.to : '');
+        const retryCc = failedList.length ? rejectedCc.join(', ') : (!hasAcceptedRecipients ? compose.cc : '');
+        const retryBcc = failedList.length ? rejectedBcc.join(', ') : (!hasAcceptedRecipients ? compose.bcc : '');
+        setCompose({ ...compose, draftId: hasAcceptedRecipients ? crypto.randomUUID() : compose.draftId, replaceUid: hasAcceptedRecipients ? undefined : compose.replaceUid, to: retryTo, cc: retryCc, bcc: retryBcc });
+        setShowCc(retryCc.length > 0); setShowBcc(retryBcc.length > 0);
+        setDraftStatus(hasAcceptedRecipients ? `Đã gửi một phần; kiểm tra ô Đến/CC/BCC để gửi lại ${failedList.length} địa chỉ bị từ chối.` : 'Máy chủ chưa nhận thư. Bản nháp được giữ để anh kiểm tra và gửi lại.');
+        setNotice(hasAcceptedRecipients
+          ? `Đã gửi cho ${result.accepted.length}/${result.accepted.length + result.rejected.length} người nhận. Đã giữ lại địa chỉ bị từ chối để anh gửi lại: ${shown}${suffix}.${!result.draftRemoved ? ' Bản nháp cũ vẫn còn nguyên danh sách ban đầu; không gửi lại bản đó để tránh gửi trùng.' : ''}`
+          : `Máy chủ từ chối tất cả ${result.rejected.length} người nhận. Địa chỉ vẫn được giữ trong biểu mẫu và bản nháp; hãy sửa rồi gửi lại.`);
         return;
       }
       setCompose(null); setShowCc(false); setShowBcc(false);
