@@ -10,6 +10,13 @@ type MailItem = { uid: number; folder?: string; subject: string; from: Address[]
 type Message = MailItem & { folder: string; cc: string; ccAddresses: Address[]; bcc: string; bccAddresses: Address[]; draftId?: string; text: string; html: string; hasRemoteImages?: boolean; externalImagesVisible?: boolean; attachments: { index: number; filename: string; contentType: string; size: number }[] };
 type Compose = { draftId: string; replaceUid?: number; to: string; cc: string; bcc: string; subject: string; text: string; html: string; files: File[] };
 
+async function processBulk<T>(items:T[],operation:(item:T)=>Promise<unknown>){
+  let cursor=0,succeeded=0,firstError:unknown;
+  const worker=async()=>{while(true){const index=cursor++;if(index>=items.length)return;try{await operation(items[index]);succeeded++;}catch(error){firstError??=error;}}};
+  await Promise.all(Array.from({length:Math.min(4,items.length)},worker));
+  return {succeeded,failed:items.length-succeeded,error:firstError};
+}
+
 function RichEditor({ html, onChange }: { html: string; onChange: (html: string, text: string) => void }) {
   const editor = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -294,31 +301,44 @@ export default function WebmailClient() {
   }
 
   async function bulkMove(action: 'archive' | 'inbox') {
-    if (!selectedItems.length) return;
-    try {
-      await Promise.all(selectedItems.map(item => request(`/messages/${item.uid}/${action}`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder }) })));
-      setSelectedUids(new Set()); setSelected(null); await loadMessages(); await loadFolders();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không thể di chuyển các thư đã chọn.'); }
+    const targets = selectedItems;
+    if (!targets.length) return;
+    setError(''); setNotice('');
+    const result = await processBulk(targets, item => request(`/messages/${item.uid}/${action}`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder }) }));
+    setSelectedUids(new Set()); setSelected(null); await loadMessages(); try { await loadFolders(); } catch { setError('Thư đã được xử lý nhưng không tải lại được danh sách thư mục.'); }
+    const actionLabel = action === 'archive' ? 'lưu trữ' : 'chuyển về Hộp thư đến';
+    if (result.failed) {
+      const summary = `Đã ${actionLabel} ${result.succeeded}/${targets.length} thư; ${result.failed} thư chưa xử lý được. Danh sách đã được làm mới.`;
+      if (result.succeeded) setNotice(summary);
+      else setError(result.error instanceof Error ? result.error.message : summary);
+    } else setNotice(`Đã ${actionLabel} ${result.succeeded} thư.`);
   }
 
   async function bulkUpdate(flag: 'seen' | 'unseen') {
     const targets = selectedItems;
     if (!targets.length) return;
-    try {
-      await Promise.all(targets.map(item => request(`/messages/${item.uid}/flags`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder, flag }) })));
-      setItems(current => current.map(item => selectedUids.has(messageKey(item)) ? { ...item, seen: flag === 'seen' } : item));
-      setSelectedUids(new Set());
-      void loadFolders();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không cập nhật được các thư đã chọn.'); }
+    setError(''); setNotice('');
+    const result = await processBulk(targets, item => request(`/messages/${item.uid}/flags`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder, flag }) }));
+    setSelectedUids(new Set()); await loadMessages(); try { await loadFolders(); } catch { setError('Trạng thái thư đã được cập nhật nhưng không tải lại được danh sách thư mục.'); }
+    const actionLabel = flag === 'seen' ? 'đánh dấu đã đọc' : 'đánh dấu chưa đọc';
+    if (result.failed) {
+      const summary = `Đã ${actionLabel} ${result.succeeded}/${targets.length} thư; ${result.failed} thư chưa xử lý được. Danh sách đã được làm mới.`;
+      if (result.succeeded) setNotice(summary);
+      else setError(result.error instanceof Error ? result.error.message : summary);
+    } else setNotice(`Đã ${actionLabel} ${result.succeeded} thư.`);
   }
 
   async function bulkDelete() {
     const targets = selectedItems;
     if (!targets.length) return;
-    try {
-      await Promise.all(targets.map(item => request(`/messages/${item.uid}/trash`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder }) })));
-      setSelectedUids(new Set()); setSelected(null); await loadMessages(); await loadFolders();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không chuyển được các thư đã chọn vào thùng rác.'); }
+    setError(''); setNotice('');
+    const result = await processBulk(targets, item => request(`/messages/${item.uid}/trash`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder }) }));
+    setSelectedUids(new Set()); setSelected(null); await loadMessages(); try { await loadFolders(); } catch { setError('Thư đã được xử lý nhưng không tải lại được danh sách thư mục.'); }
+    const summary = `Đã chuyển ${result.succeeded}/${targets.length} thư vào Thùng rác; ${result.failed} thư chưa xử lý được. Danh sách đã được làm mới.`;
+    if (result.failed) {
+      if (result.succeeded) setNotice(summary);
+      else setError(result.error instanceof Error ? result.error.message : summary);
+    } else setNotice(`Đã chuyển ${result.succeeded} thư vào Thùng rác.`);
   }
 
   async function sendMessage(event: FormEvent) {
