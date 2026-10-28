@@ -402,13 +402,17 @@ export class WebmailService {
     if (html.length > 100_000) throw new BadRequestException('Định dạng thư vượt quá giới hạn cho phép');
     const port = Number(process.env.MAILCOW_SMTP_PORT || 465);
     const messageOptions = { from: session.email, to, cc: cc.length ? cc : undefined, bcc: bcc.length ? bcc : undefined, subject, text, html: html || undefined, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } };
+    const addresses = (values: readonly unknown[]) => values.map(value => String(value)).filter(Boolean);
     const renderer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'windows' });
     const transport = nodemailer.createTransport({ host: this.smtpHost, port, secure: port === 465, auth: { user: session.email, pass: session.password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 });
     try {
       const rendered = await renderer.sendMail({ ...messageOptions, bcc: undefined });
       if (!Buffer.isBuffer(rendered.message)) throw new Error('MIME message was not buffered');
       const sent = await transport.sendMail({ raw: rendered.message, envelope: { from: session.email, to: recipients } });
-      if (!sent.accepted.length) throw new BadRequestException('Máy chủ không chấp nhận người nhận. Kiểm tra lại địa chỉ rồi thử lại.');
+      if (!sent.accepted.length) {
+        const rejected = addresses(sent.rejected);
+        return { accepted: [], rejected: rejected.length ? rejected : recipients, messageId: rendered.messageId || sent.messageId, savedToSent: false, draftRemoved: false };
+      }
       let savedToSent = false;
       try {
         const client = this.makeClient(session.email, session.password);
@@ -424,10 +428,13 @@ export class WebmailService {
         } finally { await client.logout().catch(() => undefined); }
       } catch { savedToSent = false; }
       const draftRemoved = input.draftId ? await this.removeDraftCopies(session.email, session.password, input.draftId, input.replaceUid) : true;
-      const addresses = (values: typeof sent.accepted) => values.map(value => String(value)).filter(Boolean);
       return { accepted: addresses(sent.accepted), rejected: addresses(sent.rejected), messageId: rendered.messageId || sent.messageId, savedToSent, draftRemoved };
     } catch (reason) {
       if (reason instanceof BadRequestException) throw reason;
+      const smtpError = reason as { accepted?: unknown[]; rejected?: unknown[]; messageId?: string };
+      const accepted = Array.isArray(smtpError?.accepted) ? addresses(smtpError.accepted) : [];
+      const rejected = Array.isArray(smtpError?.rejected) ? addresses(smtpError.rejected) : [];
+      if (!accepted.length && rejected.length) return { accepted, rejected, messageId: smtpError.messageId, savedToSent: false, draftRemoved: false };
       throw new BadRequestException('Không gửi được thư. Vui lòng kiểm tra kết nối hoặc thử lại sau.');
     }
     finally { renderer.close(); transport.close(); }
