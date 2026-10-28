@@ -147,6 +147,42 @@ export class WebmailService {
     });
   }
 
+  async contacts(token: string | undefined) {
+    return this.withClient(token, async client => {
+      const folders = await client.list();
+      const sentFolder = folders.find(item => item.specialUse === '\\Sent') || folders.find(item => /^(sent|sent items|thư đã gửi)$/i.test(item.name));
+      if (!sentFolder) return [];
+      const lock = await client.getMailboxLock(sentFolder.path, { readOnly: true });
+      try {
+        const matching = await client.search({ all: true }, { uid: true });
+        const uids = (Array.isArray(matching) ? matching : []).slice(-300).reverse();
+        if (!uids.length) return [];
+        const messages = await client.fetchAll(uids, { envelope: true, internalDate: true, uid: true }, { uid: true });
+        const own = this.session(token).email.toLowerCase();
+        const people = new Map<string, { address: string; name: string; count: number; lastUsed: number }>();
+        for (const message of messages) {
+          const date = message.envelope?.date || message.internalDate;
+          const lastUsed = date ? new Date(date).getTime() || 0 : 0;
+          const addresses = [...(message.envelope?.to || []), ...(message.envelope?.cc || [])] as MailAddress[];
+          for (const item of addresses) {
+            const address = (item.address || '').trim().toLowerCase();
+            if (!address || address === own || address.length > 254 || !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(address)) continue;
+            const current = people.get(address);
+            if (current) {
+              current.count++;
+              current.lastUsed = Math.max(current.lastUsed, lastUsed);
+              if (!current.name && item.name) current.name = item.name;
+            } else people.set(address, { address, name: (item.name || '').slice(0, 120), count: 1, lastUsed });
+          }
+        }
+        return [...people.values()]
+          .sort((a, b) => b.lastUsed - a.lastUsed || b.count - a.count || a.address.localeCompare(b.address))
+          .slice(0, 100)
+          .map(({ address, name }) => ({ address, name }));
+      } finally { lock.release(); }
+    });
+  }
+
   async messages(token: string | undefined, folder: string, query = '', requestedPage = 1, filter: 'all' | 'unread' | 'starred' = 'all') {
     if (!folder || (folder !== '*' && folder.length > 255)) throw new BadRequestException('Thư mục không hợp lệ');
     if (query.length > 200) throw new BadRequestException('Từ khóa tìm kiếm tối đa 200 ký tự');
