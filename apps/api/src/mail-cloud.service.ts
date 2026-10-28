@@ -90,7 +90,7 @@ export class MailCloudService {
     } catch(error) {
       if(rows) {
         await this.database.query('delete from mailboxes where id=$1::uuid and tenant_id=$2::uuid',[mailbox.id,tenantId]).catch(()=>undefined);
-        if(jobId) await this.database.query('update provisioning_jobs set status=\'failed\',attempts=attempts+1,last_error=$2,updated_at=now() where id=$1::uuid',[jobId,error instanceof Error?error.message:'Mailcow mailbox provisioning failed']).catch(()=>undefined);
+        if(jobId) await this.database.query('update provisioning_jobs set status=\'failed\',attempts=attempts+1,last_error=$3,updated_at=now() where id=$1::uuid and tenant_id=$2::uuid',[jobId,tenantId,error instanceof Error?error.message:'Mailcow mailbox provisioning failed']).catch(()=>undefined);
       } else {
         this.mailboxes.push(mailbox as Mailbox);
       }
@@ -98,7 +98,7 @@ export class MailCloudService {
       throw new BadRequestException(error instanceof Error?error.message:'Mailcow mailbox provisioning failed');
     }
     if(!rows) this.mailboxes.push(mailbox as Mailbox);
-    if(jobId) await this.database.query('update provisioning_jobs set status=\'succeeded\',attempts=attempts+1,last_error=null,updated_at=now() where id=$1::uuid',[jobId]).catch(()=>undefined);
+    if(jobId) await this.database.query('update provisioning_jobs set status=\'succeeded\',attempts=attempts+1,last_error=null,updated_at=now() where id=$1::uuid and tenant_id=$2::uuid',[jobId,tenantId]).catch(()=>undefined);
     this.record('mailbox.create',mailbox.id);
     return {...mailbox,provisioningJobId:jobId,provisioningStatus:jobId?'succeeded':'local-only',temporaryPassword:body.password?undefined:password};
   }
@@ -116,7 +116,7 @@ export class MailCloudService {
     try {
       await this.mailcow.editMailbox(existing.address,next.quotaGb,next.status);
     } catch(error) {
-      if(rows) await this.database.query('update mailboxes set quota_gb=$2,status=$3 where id=$1::uuid',[id,existing.quotaGb,existing.status]).catch(()=>undefined);
+      if(rows) await this.database.query('update mailboxes set quota_gb=$3,status=$4 where id=$1::uuid and tenant_id=$2::uuid',[id,tenantId,existing.quotaGb,existing.status]).catch(()=>undefined);
       throw new BadRequestException(error instanceof Error?error.message:'Mailcow mailbox update failed');
     }
     const mailbox=rows?.[0]??Object.assign(existing,next);
