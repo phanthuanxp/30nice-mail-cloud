@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArrowLeft, Bold, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File as FileIcon, Forward, Image as ImageIcon, Inbox, Italic, Link2, List, ListOrdered, LogOut, Mail, MailOpen, Menu, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Trash2, Underline, X } from 'lucide-react';
 
 type Folder = { path: string; name: string; specialUse: string | null; messages: number; unread: number };
@@ -400,7 +400,7 @@ export default function WebmailClient() {
     setCompose({ ...compose, [field]: values.join(',').trimStart() + ', ' });
     setActiveRecipient(null); setSuggestionIndex(0);
   }
-  function recipientKeyDown(event: React.KeyboardEvent<HTMLInputElement>, field: 'to' | 'cc' | 'bcc') {
+  function recipientKeyDown(event: ReactKeyboardEvent<HTMLInputElement>, field: 'to' | 'cc' | 'bcc') {
     const matches = recipientSuggestions(field);
     if (event.key === 'Escape') { setActiveRecipient(null); return; }
     if (!matches.length) return;
