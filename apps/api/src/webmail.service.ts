@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 
 type WebmailSession = { email: string; password: string; expiresAt: number };
 type MailAddress = { address?: string; name?: string };
-type DraftInput = { draftId?: string; replaceUid?: number; to?: string; cc?: string; subject?: string; text?: string; html?: string };
+type DraftInput = { draftId?: string; replaceUid?: number; to?: string; cc?: string; bcc?: string; subject?: string; text?: string; html?: string };
 
 @Injectable()
 export class WebmailService {
@@ -231,9 +231,12 @@ export class WebmailService {
         const ccValues = Array.isArray(parsed.cc) ? parsed.cc.flatMap(value => value.value) : parsed.cc?.value || [];
         const ccAddresses = ccValues.map(value => ({ address: value.address || '', name: value.name || '' })).filter(value => value.address || value.name);
         const cc = ccAddresses.map(value => value.address || value.name).join(', ');
+        const bccValues = Array.isArray(parsed.bcc) ? parsed.bcc.flatMap(value => value.value) : parsed.bcc?.value || [];
+        const bccAddresses = bccValues.map(value => ({ address: value.address || '', name: value.name || '' })).filter(value => value.address || value.name);
+        const bcc = bccAddresses.map(value => value.address || value.name).join(', ');
         const draftIdHeader = parsed.headers.get('x-30nice-draft-id');
         const draftId = typeof draftIdHeader === 'string' ? draftIdHeader : undefined;
-        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, draftId, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, draft: message.flags?.has('\\Draft') || false, size: message.source.length, text: parsed.text || '', html, hasRemoteImages, externalImagesVisible: externalImages, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
+        return { uid, folder, subject: parsed.subject || '(Không có tiêu đề)', from, to, cc, ccAddresses, bcc, bccAddresses, draftId, date: parsed.date ? new Date(parsed.date).toISOString() : null, seen: true, flagged: message.flags?.has('\\Flagged') || false, draft: message.flags?.has('\\Draft') || false, size: message.source.length, text: parsed.text || '', html, hasRemoteImages, externalImagesVisible: externalImages, attachments: (parsed.attachments || []).map((item, index) => ({ index, filename: item.filename || 'Tệp đính kèm', contentType: item.contentType, size: item.size })) };
       } finally { lock.release(); }
     });
   }
@@ -316,9 +319,11 @@ export class WebmailService {
     const session = this.session(token);
     const to = (input.to || '').split(',').map(value => value.trim()).filter(Boolean);
     const cc = (input.cc || '').split(',').map(value => value.trim()).filter(Boolean);
+    const bcc = (input.bcc || '').split(',').map(value => value.trim()).filter(Boolean);
     const validAddress = (address: string) => /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(address);
-    if (!to.length || to.length > 20 || to.some(address => !validAddress(address))) throw new BadRequestException('Nhập địa chỉ người nhận hợp lệ, tối đa 20 người');
-    if (cc.length > 20 || cc.some(address => !validAddress(address))) throw new BadRequestException('Địa chỉ CC không hợp lệ');
+    const recipients = [...to, ...cc, ...bcc];
+    if (!to.length || recipients.length > 20 || recipients.some(address => !validAddress(address))) throw new BadRequestException('Nhập địa chỉ người nhận hợp lệ, tối đa 20 người cho To, CC và BCC');
+    if (new Set(recipients.map(address => address.toLowerCase())).size !== recipients.length) throw new BadRequestException('Mỗi địa chỉ chỉ được nhập một lần trong To, CC hoặc BCC');
     if (files.length > 5 || files.reduce((total, file) => total + file.buffer.length, 0) > 20 * 1024 * 1024) throw new BadRequestException('Tổng dung lượng tệp đính kèm tối đa là 20 MB');
     const subject = (input.subject || '').trim().slice(0, 998);
     const text = input.text || '';
@@ -327,13 +332,13 @@ export class WebmailService {
     if (text.length > 50_000) throw new BadRequestException('Nội dung thư vượt quá giới hạn 50 KB');
     if (html.length > 100_000) throw new BadRequestException('Định dạng thư vượt quá giới hạn cho phép');
     const port = Number(process.env.MAILCOW_SMTP_PORT || 465);
-    const messageOptions = { from: session.email, to, cc: cc.length ? cc : undefined, subject, text, html: html || undefined, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } };
+    const messageOptions = { from: session.email, to, cc: cc.length ? cc : undefined, bcc: bcc.length ? bcc : undefined, subject, text, html: html || undefined, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } };
     const renderer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'windows' });
     const transport = nodemailer.createTransport({ host: this.smtpHost, port, secure: port === 465, auth: { user: session.email, pass: session.password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000 });
     try {
-      const rendered = await renderer.sendMail(messageOptions);
+      const rendered = await renderer.sendMail({ ...messageOptions, bcc: undefined });
       if (!Buffer.isBuffer(rendered.message)) throw new Error('MIME message was not buffered');
-      const sent = await transport.sendMail({ raw: rendered.message, envelope: { from: session.email, to: [...to, ...cc] } });
+      const sent = await transport.sendMail({ raw: rendered.message, envelope: { from: session.email, to: recipients } });
       if (!sent.accepted.length) throw new BadRequestException('Máy chủ không chấp nhận người nhận. Kiểm tra lại địa chỉ rồi thử lại.');
       let savedToSent = false;
       try {
@@ -342,7 +347,11 @@ export class WebmailService {
           await client.connect();
           const folders = await client.list();
           const sentFolder = folders.find(folder => folder.specialUse === '\\Sent') || folders.find(folder => /^(sent|sent items|thư đã gửi)$/i.test(folder.name));
-          if (sentFolder) savedToSent = Boolean(await client.append(sentFolder.path, rendered.message, ['\\Seen']));
+          if (sentFolder) {
+            const sentCopy = await renderer.sendMail(messageOptions);
+            if (!Buffer.isBuffer(sentCopy.message)) throw new Error('Sent copy MIME message was not buffered');
+            savedToSent = Boolean(await client.append(sentFolder.path, sentCopy.message, ['\\Seen']));
+          }
         } finally { await client.logout().catch(() => undefined); }
       } catch { savedToSent = false; }
       const draftRemoved = input.draftId ? await this.removeDraftCopies(session.email, session.password, input.draftId, input.replaceUid) : true;
@@ -361,7 +370,9 @@ export class WebmailService {
     if (!/^[a-z0-9-]{16,80}$/i.test(draftId)) throw new BadRequestException('Mã thư nháp không hợp lệ');
     const to = (input.to || '').split(',').map(value => value.trim()).filter(Boolean);
     const cc = (input.cc || '').split(',').map(value => value.trim()).filter(Boolean);
-    if (to.length > 20 || cc.length > 20 || [...to, ...cc].some(value => value.length > 254)) throw new BadRequestException('Danh sách người nhận trong thư nháp không hợp lệ');
+    const bcc = (input.bcc || '').split(',').map(value => value.trim()).filter(Boolean);
+    const recipients = [...to, ...cc, ...bcc];
+    if (recipients.length > 20 || recipients.some(value => value.length > 254)) throw new BadRequestException('Danh sách người nhận trong thư nháp không hợp lệ');
     const html = this.sanitizeMessageHtml(input.html || '');
     if ((input.subject || '').length > 998 || (input.text || '').length > 50_000 || html.length > 100_000) throw new BadRequestException('Thư nháp vượt quá giới hạn cho phép');
     if (files.length > 5 || files.reduce((total, file) => total + file.buffer.length, 0) > 20 * 1024 * 1024) throw new BadRequestException('Tổng dung lượng tệp đính kèm tối đa là 20 MB');
@@ -379,6 +390,7 @@ export class WebmailService {
           from: session.email,
           to: to.length ? to : undefined,
           cc: cc.length ? cc : undefined,
+          bcc: bcc.length ? bcc : undefined,
           subject: input.subject || '',
           text: input.text || '',
           html: html || undefined,
