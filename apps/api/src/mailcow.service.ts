@@ -36,6 +36,6 @@ export class MailcowService {
     return exists?[{type:'success',msg:'Domain already exists'}]:this.addDomain(domain);
   }
   async addMailbox(domain:string,localPart:string,quotaGb:number,password:string){return this.request('/api/v1/add/mailbox',{local_part:localPart,domain,password,password2:password,quota:quotaGb*1024,active:1});}
-  async editMailbox(address:string,quotaGb?:number,status?:'active'|'disabled'){return this.request('/api/v1/edit/mailbox',{username:address,quota:quotaGb===undefined?undefined:quotaGb*1024,active:status==='disabled'?0:1});}
+  async editMailbox(address:string,quotaGb?:number,status?:'active'|'disabled',password?:string){return this.request('/api/v1/edit/mailbox',{username:address,quota:quotaGb===undefined?undefined:quotaGb*1024,active:status===undefined?undefined:status==='disabled'?0:1,password,password2:password});}
 }
 
