@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Check, LockKeyhole, RefreshCw, UnlockKeyhole, UserPlus } from 'lucide-react';
+import { Check, Copy, KeyRound, LockKeyhole, RefreshCw, UnlockKeyhole, UserPlus, X } from 'lucide-react';
 import './mailbox-panel.css';
 
 type Tenant = { id: string; name: string };
@@ -15,6 +15,7 @@ export default function MailboxPanel() {
   const [address, setAddress] = useState('');
   const [quotaGb, setQuotaGb] = useState('5');
   const [password, setPassword] = useState('');
+  const [passwordReveal, setPasswordReveal] = useState('');
   const [message, setMessage] = useState('');
   const [messageIsError, setMessageIsError] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -58,7 +59,8 @@ export default function MailboxPanel() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || 'Không thể tạo hộp thư.');
-      setMessage(result.temporaryPassword ? `Đã tạo hộp thư. Mật khẩu tạm thời: ${result.temporaryPassword}` : 'Đã tạo hộp thư thành công.');
+      setPasswordReveal(result.temporaryPassword || '');
+      setMessage(result.temporaryPassword ? 'Đã tạo hộp thư. Sao chép mật khẩu tạm thời và gửi cho người dùng qua kênh an toàn.' : 'Đã tạo hộp thư thành công.');
       setAddress(''); setPassword(''); await load();
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : 'Không thể tạo hộp thư.'); setMessageIsError(true);
@@ -80,6 +82,20 @@ export default function MailboxPanel() {
     } finally { setSavingId(''); }
   }
 
+  async function resetPassword(item: Mailbox) {
+    if (!window.confirm(`Đặt lại mật khẩu cho ${item.address}? Mật khẩu hiện tại sẽ ngừng hoạt động.`)) return;
+    setSavingId(item.id); setMessage(''); setMessageIsError(false); setPasswordReveal('');
+    try {
+      const response = await fetch(`/api/api/v1/tenants/${tenant}/mailboxes/${item.id}/reset-password`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Không thể đặt lại mật khẩu.');
+      setPasswordReveal(result.temporaryPassword);
+      setMessage('Đã đặt lại mật khẩu. Sao chép và gửi cho người dùng qua kênh an toàn.');
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : 'Không thể đặt lại mật khẩu.'); setMessageIsError(true);
+    } finally { setSavingId(''); }
+  }
+
   return <div className="mailboxPanel">
     <div className="mailboxToolbar">
       <select aria-label="Chọn khách hàng" value={tenant} onChange={event => setTenant(event.target.value)}>
@@ -93,7 +109,7 @@ export default function MailboxPanel() {
       <label>Mật khẩu<input type="password" autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Để trống để tự tạo" /></label>
       <button className="primary" disabled={loading || !tenant || !address.trim() || !Number.isInteger(Number(quotaGb)) || Number(quotaGb) < 1 || Number(quotaGb) > 1000} onClick={() => void create()}>{loading ? <RefreshCw className="spin" size={16} /> : <UserPlus size={16} />} Tạo hộp thư</button>
     </div>
-    {message && <p className={`mailboxMessage ${messageIsError ? 'error' : ''}`} role={messageIsError ? 'alert' : 'status'}>{message}</p>}
+    {message && <p className={`mailboxMessage ${messageIsError ? 'error' : ''}`} role={messageIsError ? 'alert' : 'status'}>{message}</p>}{passwordReveal && <div className="mailboxPasswordReveal" role="status"><div><b>Mật khẩu tạm thời · chỉ hiển thị lần này</b><code>{passwordReveal}</code></div><button className="mailboxAction" onClick={() => void navigator.clipboard?.writeText(passwordReveal)}><Copy size={14} /> Sao chép</button><button className="mailboxPasswordDismiss" aria-label="Ẩn mật khẩu" onClick={() => setPasswordReveal('')}><X size={16} /></button></div>}
     <div className="mailboxList">
       {items.map(item => {
         const quota = Number(quotaDrafts[item.id] ?? item.quotaGb);
@@ -107,6 +123,7 @@ export default function MailboxPanel() {
           <button className="mailboxAction" disabled={savingId === item.id} onClick={() => void update(item, { status: item.status === 'active' ? 'disabled' : 'active' })}>
             {item.status === 'active' ? <><LockKeyhole size={14} /> Tạm khóa</> : <><UnlockKeyhole size={14} /> Mở lại</>}
           </button>
+          <button className="mailboxAction" disabled={savingId === item.id} onClick={() => void resetPassword(item)}><KeyRound size={14} /> Đặt mật khẩu mới</button>
         </div>;
       })}
       {!items.length && <p className="emptyText">{tenant ? 'Chưa có hộp thư trong khách hàng này.' : 'Chọn khách hàng để xem hộp thư.'}</p>}
