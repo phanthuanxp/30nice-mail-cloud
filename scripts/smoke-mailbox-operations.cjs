@@ -6,9 +6,14 @@ async function main() {
   let stored = { id: 'mailbox-id', tenantId: 'tenant-id', address: 'user@example.test', quotaGb: 5, status: 'active' };
   let failMailcow = false;
   let rollbackCount = 0;
+  let jobsTenant = '';
   const resetCalls = [];
   const database = {
     query: async (sql, values = []) => {
+      if (sql.startsWith('select id::text,tenant_id::text as "tenantId",idempotency_key')) {
+        jobsTenant = values[0];
+        return values[0] === 'tenant-id' ? [{ id: 'job-id', tenantId: 'tenant-id', idempotencyKey: 'mailbox:user@example.test', jobType: 'mailbox.provision', status: 'succeeded', attempts: 1, lastError: null, createdAt: '2026-10-28T00:00:00Z', updatedAt: '2026-10-28T00:00:01Z' }] : [];
+      }
       if (sql.startsWith('select address from mailboxes')) return values[0] === stored.id && values[1] === stored.tenantId ? [{ address: stored.address }] : [];
       if (sql.startsWith('select address,quota_gb')) return [{ address: stored.address, quotaGb: stored.quotaGb, status: stored.status }];
       if (sql.startsWith('update mailboxes set quota_gb=$3')) {
@@ -31,6 +36,11 @@ async function main() {
     },
   };
   const service = new MailCloudService(database, mailcow);
+  const jobs = await service.listProvisioningJobs('tenant-id');
+  assert.equal(jobsTenant, 'tenant-id', 'tenant ID is bound as a SQL parameter');
+  assert.equal(jobs[0].tenantId, 'tenant-id');
+  assert.deepEqual(await service.listProvisioningJobs('other-tenant'), [], 'job history is tenant scoped');
+  assert.equal(jobsTenant, 'other-tenant');
 
   const changed = await service.updateMailbox('tenant-id', 'mailbox-id', { quotaGb: 20, status: 'disabled' });
   assert.equal(changed.quotaGb, 20);
