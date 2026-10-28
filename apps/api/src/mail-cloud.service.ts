@@ -123,6 +123,17 @@ export class MailCloudService {
     this.record('mailbox.update',id);
     return mailbox;
   }
+  async resetMailboxPassword(tenantId:string,id:string) {
+    const rows=await this.database.query<{address:string}>('select address from mailboxes where id=$1::uuid and tenant_id=$2::uuid',[id,tenantId]);
+    if(this.mailcowModeIsProduction()&&!rows) throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng; không thể đặt lại mật khẩu');
+    const existing=rows?.[0]??this.mailboxes.find(mailbox=>mailbox.id===id&&mailbox.tenantId===tenantId);
+    if(!existing) throw new NotFoundException('Không tìm thấy hộp thư');
+    const temporaryPassword=randomBytes(18).toString('base64url')+'A1!';
+    try { await this.mailcow.editMailbox(existing.address,undefined,undefined,temporaryPassword); }
+    catch(error) { throw new BadRequestException(error instanceof Error?error.message:'Không thể đặt lại mật khẩu hộp thư'); }
+    this.record('mailbox.password_reset',id);
+    return {address:existing.address,temporaryPassword};
+  }
   private record(action:string,resourceId:string,requestId?:string){this.audit.push({action,resourceId,requestId:requestId??'system',createdAt:new Date().toISOString()}); void this.database.query('insert into audit_logs(action,resource_type,resource_id,request_id) values($1,$2,$3,$4)',[action,action.split('.')[0],resourceId,requestId??'system']).catch(()=>undefined);}
   databaseStatus(){return this.database.status();}
 }
