@@ -6,11 +6,14 @@ import './mailbox-panel.css';
 
 type Tenant = { id: string; name: string };
 type Mailbox = { id: string; address: string; quotaGb: number; status: 'active' | 'disabled' };
+type ProvisioningJob = { id: string; tenantId: string; idempotencyKey: string; jobType: string; status: string; attempts: number; lastError: string | null; createdAt: string; updatedAt: string };
 
 export default function MailboxPanel() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [tenant, setTenant] = useState('');
   const [items, setItems] = useState<Mailbox[]>([]);
+  const [jobs, setJobs] = useState<ProvisioningJob[]>([]);
+  const [jobsError, setJobsError] = useState('');
   const [quotaDrafts, setQuotaDrafts] = useState<Record<string, string>>({});
   const [address, setAddress] = useState('');
   const [quotaGb, setQuotaGb] = useState('5');
@@ -35,6 +38,26 @@ export default function MailboxPanel() {
       setMessageIsError(true);
     }
   }, [tenant]);
+
+  const hasPendingJobs = jobs.some(job => job.status === 'queued' || job.status === 'running');
+  const loadJobs = useCallback(async () => {
+    if (!tenant) { setJobs([]); setJobsError(''); return; }
+    try {
+      const response = await fetch(`/api/api/v1/tenants/${tenant}/provisioning-jobs`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Không tải được lịch sử cấp phát.');
+      setJobs(Array.isArray(result) ? result : []); setJobsError('');
+    } catch (reason) {
+      setJobsError(reason instanceof Error ? reason.message : 'Không tải được lịch sử cấp phát.');
+    }
+  }, [tenant]);
+
+  useEffect(() => {
+    void loadJobs();
+    if (!hasPendingJobs) return;
+    const timer = window.setInterval(() => { void loadJobs(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [loadJobs, hasPendingJobs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,7 +84,7 @@ export default function MailboxPanel() {
       if (!response.ok) throw new Error(result.message || 'Không thể tạo hộp thư.');
       setPasswordReveal(result.temporaryPassword || '');
       setMessage(result.temporaryPassword ? 'Đã tạo hộp thư. Sao chép mật khẩu tạm thời và gửi cho người dùng qua kênh an toàn.' : 'Đã tạo hộp thư thành công.');
-      setAddress(''); setPassword(''); await load();
+      setAddress(''); setPassword(''); await Promise.all([load(), loadJobs()]);
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : 'Không thể tạo hộp thư.'); setMessageIsError(true);
     } finally { setLoading(false); }
@@ -101,7 +124,7 @@ export default function MailboxPanel() {
       <select aria-label="Chọn khách hàng" value={tenant} onChange={event => setTenant(event.target.value)}>
         <option value="">Chọn khách hàng</option>{tenants.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select>
-      <button className="ghost" onClick={() => void load()} disabled={loading || Boolean(savingId)}><RefreshCw size={14} /> Làm mới</button>
+      <button className="ghost" onClick={() => void Promise.all([load(), loadJobs()])} disabled={loading || Boolean(savingId)}><RefreshCw size={14} /> Làm mới</button>
     </div>
     <div className="mailboxCreate">
       <label>Địa chỉ hộp thư<input type="email" value={address} onChange={event => setAddress(event.target.value)} placeholder="user@congty.vn" /></label>
@@ -110,6 +133,16 @@ export default function MailboxPanel() {
       <button className="primary" disabled={loading || !tenant || !address.trim() || !Number.isInteger(Number(quotaGb)) || Number(quotaGb) < 1 || Number(quotaGb) > 1000} onClick={() => void create()}>{loading ? <RefreshCw className="spin" size={16} /> : <UserPlus size={16} />} Tạo hộp thư</button>
     </div>
     {message && <p className={`mailboxMessage ${messageIsError ? 'error' : ''}`} role={messageIsError ? 'alert' : 'status'}>{message}</p>}{passwordReveal && <div className="mailboxPasswordReveal" role="status"><div><b>Mật khẩu tạm thời · chỉ hiển thị lần này</b><code>{passwordReveal}</code></div><button className="mailboxAction" onClick={() => void navigator.clipboard?.writeText(passwordReveal)}><Copy size={14} /> Sao chép</button><button className="mailboxPasswordDismiss" aria-label="Ẩn mật khẩu" onClick={() => setPasswordReveal('')}><X size={16} /></button></div>}
+    <section className="provisioningHistory" aria-labelledby="provisioning-history-title">
+      <div className="provisioningHistoryHeader"><div><h3 id="provisioning-history-title">Lịch sử cấp phát</h3><p>Theo dõi kết quả tạo hộp thư trong khách hàng này.</p></div><button className="mailboxAction" onClick={() => void loadJobs()}><RefreshCw size={13} /> Làm mới</button></div>
+      {jobsError && <p className="provisioningHistoryError" role="alert">{jobsError}</p>}
+      {!jobsError && jobs.length === 0 && <p className="provisioningHistoryEmpty">Chưa có hoạt động cấp phát.</p>}
+      {jobs.slice(0, 10).map(job => <div className="provisioningJobRow" key={job.id}>
+        <span className={`provisioningJobStatus ${job.status}`}>{({ queued: 'Đang chờ', running: 'Đang xử lý', succeeded: 'Thành công', failed: 'Thất bại', dead_letter: 'Cần xử lý' } as Record<string, string>)[job.status] || job.status}</span>
+        <div className="provisioningJobInfo"><b>{job.jobType === 'mailbox.provision' ? 'Tạo hộp thư' : job.jobType}</b><small>{job.idempotencyKey.replace(/^mailbox:/, '')}</small>{job.lastError && <small className="provisioningJobError">{job.lastError}</small>}</div>
+        <div className="provisioningJobMeta"><span>{job.attempts} lần thử</span><time dateTime={job.updatedAt}>{job.updatedAt ? new Date(job.updatedAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' }) : ''}</time></div>
+      </div>)}
+    </section>
     <div className="mailboxList">
       {items.map(item => {
         const quota = Number(quotaDrafts[item.id] ?? item.quotaGb);
