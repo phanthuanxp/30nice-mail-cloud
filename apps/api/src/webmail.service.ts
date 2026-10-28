@@ -189,11 +189,44 @@ export class WebmailService {
     const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, 1_000_000) : 1;
     const pageSize = 50;
     return this.withClient(token, async client => {
-      const term = query.trim().toLocaleLowerCase();
+      const term = query.trim();
       if (folder === '*' && !term) throw new BadRequestException('Nhập từ khóa để tìm trong toàn bộ hộp thư');
-      const criteria: { all?: boolean; text?: string; seen?: boolean; flagged?: boolean } = {};
-      if (term) criteria.text = term;
-      else criteria.all = true;
+      const criteria: { all?: boolean; text?: string; from?: string; to?: string; cc?: string; subject?: string; since?: Date; before?: Date; seen?: boolean; flagged?: boolean } = {};
+      const freeText: string[] = [];
+      let explicitSeen: boolean | undefined;
+      let conflictingSeen = false;
+      const tokens = term.match(/(?:[a-z]+:)?(?:"[^"]*"|'[^']*'|\S+)/gi) || [];
+      for (const token of tokens) {
+        const match = token.match(/^([a-z]+):(.+)$/i);
+        if (!match) { freeText.push(token.replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, (_whole, doubleQuoted, singleQuoted) => doubleQuoted ?? singleQuoted)); continue; }
+        const key = match[1].toLowerCase();
+        const value = match[2].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, (_whole, doubleQuoted, singleQuoted) => doubleQuoted ?? singleQuoted).trim();
+        if (!value) { freeText.push(token); continue; }
+        if (key === 'from' || key === 'to' || key === 'cc' || key === 'subject') {
+          criteria[key] = value;
+          continue;
+        }
+        if (key === 'is' && ['unread', 'read', 'starred'].includes(value.toLowerCase())) {
+          if (value.toLowerCase() === 'starred') criteria.flagged = true;
+          else { const nextSeen = value.toLowerCase() === 'read'; if (explicitSeen !== undefined && explicitSeen !== nextSeen) conflictingSeen = true; explicitSeen = nextSeen; }
+          continue;
+        }
+        if (key === 'after' || key === 'before') {
+          const dateMatch = value.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
+          if (!dateMatch) throw new BadRequestException(`Ngày tìm kiếm không hợp lệ ở ${key}:. Dùng YYYY/MM/DD.`);
+          const [, year, month, day] = dateMatch;
+          const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+          if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)) throw new BadRequestException(`Ngày tìm kiếm không hợp lệ ở ${key}:. Dùng YYYY/MM/DD.`);
+          criteria[key === 'after' ? 'since' : 'before'] = date;
+          continue;
+        }
+        freeText.push(token);
+      }
+      if (freeText.length) criteria.text = freeText.join(' ').toLocaleLowerCase();
+      if (!tokens.length) criteria.all = true;
+      const conflictsWithFilter = (filter === 'unread' && explicitSeen === true);
+      if (conflictingSeen || conflictsWithFilter) return { folder, total: 0, page, pageSize, messages: [] };
+      if (explicitSeen !== undefined) criteria.seen = explicitSeen;
       if (filter === 'unread') criteria.seen = false;
       else if (filter === 'starred') criteria.flagged = true;
 
