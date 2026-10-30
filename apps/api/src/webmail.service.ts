@@ -46,12 +46,8 @@ export class WebmailService {
 
   private async consumeSendAllowance(email: string, recipientCount: number) {
     const now = Date.now();
-    const minuteWindow = Math.floor(now / 60_000) * 60_000;
-    const hourWindow = Math.floor(now / 3_600_000) * 3_600_000;
     const minuteLimit = this.configuredSendLimit('WEBMAIL_SEND_RECIPIENTS_PER_MINUTE', 60);
     const hourLimit = this.configuredSendLimit('WEBMAIL_SEND_RECIPIENTS_PER_HOUR', 300);
-    const minuteBucket = new Date(minuteWindow);
-    const hourBucket = new Date(hourWindow);
 
     if (await this.ensureSendLimitTable()) {
       if (now >= this.nextSendLimitCleanupAt) {
@@ -59,22 +55,31 @@ export class WebmailService {
         await this.database!.query(`DELETE FROM webmail_send_limits WHERE updated_at < now() - interval '7 days'`);
       }
       await this.database!.transaction(async query => {
+        // Derive fixed windows only after locking this mailbox row. Capturing them
+        // before the lock lets a delayed request rewind counters across a boundary.
         await query(`INSERT INTO webmail_send_limits (mailbox_email, minute_window_start, minute_count, hour_window_start, hour_count)
-          VALUES ($1, $2, 0, $3, 0) ON CONFLICT (mailbox_email) DO NOTHING`, [email, minuteBucket, hourBucket]);
+          VALUES ($1, date_trunc('minute', clock_timestamp()), 0, date_trunc('hour', clock_timestamp()), 0) ON CONFLICT (mailbox_email) DO NOTHING`, [email]);
         const [row] = await query<{ minute_window_start: Date; minute_count: number; hour_window_start: Date; hour_count: number }>(
           `SELECT minute_window_start, minute_count, hour_window_start, hour_count FROM webmail_send_limits WHERE mailbox_email=$1 FOR UPDATE`, [email]);
         if (!row) throw new HttpException('Không thể kiểm tra hạn mức gửi thư. Vui lòng thử lại.', HttpStatus.SERVICE_UNAVAILABLE);
+        const [clock] = await query<{ now: Date }>('SELECT clock_timestamp() AS now');
+        if (!clock?.now) throw new HttpException('Không thể kiểm tra hạn mức gửi thư. Vui lòng thử lại.', HttpStatus.SERVICE_UNAVAILABLE);
+        const lockedNow = new Date(clock.now).getTime();
+        const minuteWindow = Math.floor(lockedNow / 60_000) * 60_000;
+        const hourWindow = Math.floor(lockedNow / 3_600_000) * 3_600_000;
         const minuteCount = new Date(row.minute_window_start).getTime() === minuteWindow ? Number(row.minute_count) : 0;
         const hourCount = new Date(row.hour_window_start).getTime() === hourWindow ? Number(row.hour_count) : 0;
         if (minuteCount + recipientCount > minuteLimit) throw new HttpException('Hộp thư đã đạt giới hạn người nhận trong phút này. Vui lòng thử lại sau.', HttpStatus.TOO_MANY_REQUESTS);
         if (hourCount + recipientCount > hourLimit) throw new HttpException('Hộp thư đã đạt giới hạn người nhận trong giờ này. Vui lòng thử lại sau.', HttpStatus.TOO_MANY_REQUESTS);
-        await query(`UPDATE webmail_send_limits SET minute_window_start=$2, minute_count=$3, hour_window_start=$4, hour_count=$5, updated_at=now() WHERE mailbox_email=$1`,
-          [email, minuteBucket, minuteCount + recipientCount, hourBucket, hourCount + recipientCount]);
+        await query(`UPDATE webmail_send_limits SET minute_window_start=$2, minute_count=$3, hour_window_start=$4, hour_count=$5, updated_at=clock_timestamp() WHERE mailbox_email=$1`,
+          [email, new Date(minuteWindow), minuteCount + recipientCount, new Date(hourWindow), hourCount + recipientCount]);
         return [{ allowed: true }];
       });
       return;
     }
 
+    const minuteWindow = Math.floor(now / 60_000) * 60_000;
+    const hourWindow = Math.floor(now / 3_600_000) * 3_600_000;
     for (const [key, counter] of this.sendCounters) {
       if (counter.hourWindow + 3_600_000 <= now) this.sendCounters.delete(key);
     }
@@ -448,6 +453,20 @@ export class WebmailService {
       if (!inbox) throw new BadRequestException('Không tìm thấy thư mục Hộp thư đến');
       const lock = await client.getMailboxLock(folder);
       try { return await client.messageMove(uid, inbox.path, { uid: true }); }
+      finally { lock.release(); }
+    });
+  }
+
+  async deletePermanently(token: string | undefined, folder: string, uid: number) {
+    this.assertUid(uid);
+    return this.withClient(token, async client => {
+      const folders = await client.list();
+      const selected = folders.find(item => item.path === folder);
+      if (!selected) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
+      const trash = folders.find(item => item.specialUse === '\\Trash') || folders.find(item => /^(trash|deleted items|thư đã xóa|thùng rác)$/i.test(item.name));
+      if (!trash || selected.path !== trash.path) throw new BadRequestException('Chỉ có thể xóa vĩnh viễn thư đang ở trong Thùng rác');
+      const lock = await client.getMailboxLock(trash.path);
+      try { return await client.messageDelete(uid, { uid: true }); }
       finally { lock.release(); }
     });
   }
