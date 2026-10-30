@@ -20,6 +20,17 @@ CREATE TABLE IF NOT EXISTS tenant_members (
   UNIQUE (tenant_id, email)
 );
 
+CREATE TABLE IF NOT EXISTS mfa_credentials (
+  account_key TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  tenant_id UUID,
+  secret_ciphertext TEXT NOT NULL,
+  enabled_at TIMESTAMPTZ,
+  last_totp_counter BIGINT,
+  recovery_hashes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS domains (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

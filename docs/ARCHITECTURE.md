@@ -11,7 +11,7 @@
 `tenants`, `tenant_members`, `domains`, `domain_verifications`, `mailboxes`, `mail_nodes`, `domain_assignments`, `plans`, `subscriptions`, `invoices`, `payments`, `provisioning_jobs`, `audit_logs`.
 
 ## Security gates before real email
-1. Authentication with MFA and server-side RBAC (super admin vs tenant admin vs mailbox user).
+1. Authentication with MFA and server-side RBAC (super admin vs tenant admin vs mailbox user). Control-plane password login now requires TOTP enrollment or a TOTP/recovery-code challenge before issuing an access token.
 2. Tenant isolation integration tests; domain ownership verified via DNS challenge.
 3. Mailcow admin API keys **only server-side**, per-environment secrets.
 4. Queue with idempotency and rate limits; abuse prevention and outbound caps. Webmail enforces per-mailbox recipient caps per fixed minute/hour window, persisted in PostgreSQL when configured.

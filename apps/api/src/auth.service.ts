@@ -1,37 +1,371 @@
-import {ForbiddenException,HttpException,HttpStatus,Injectable,ServiceUnavailableException,UnauthorizedException} from '@nestjs/common';
-import {createHash,createHmac,scryptSync,timingSafeEqual} from 'node:crypto';
-import {DatabaseService} from './database.service';
-type Session={sub:string;role:'super_admin'|'tenant_admin'|'mailbox_user';tenantId?:string;exp:number};
+import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { DatabaseService } from './database.service';
+
+type Role = 'super_admin' | 'tenant_admin' | 'mailbox_user';
+type Session = { sub: string; role: Role; tenantId?: string; exp: number; mfaAt?: number };
+type Identity = Omit<Session, 'exp'> & { accountKey: string };
+type PendingAuth = Identity & { kind: 'setup' | 'login'; secret?: string; sourceIp: string; expiresAt: number; failures: number };
+type Credential = { secret_ciphertext: string; enabled_at: Date | null; last_totp_counter: string | number | null; recovery_hashes: string[] };
+
+const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function base32Encode(bytes: Buffer) {
+  let bits = 0;
+  let value = 0;
+  let output = '';
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) { output += BASE32[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits) output += BASE32[(value << (5 - bits)) & 31];
+  return output;
+}
+
+function base32Decode(input: string) {
+  let bits = 0;
+  let value = 0;
+  const output: number[] = [];
+  for (const char of input.replace(/=+$/g, '').toUpperCase()) {
+    const index = BASE32.indexOf(char);
+    if (index < 0) throw new Error('Invalid base32 secret');
+    value = (value << 5) | index;
+    bits += 5;
+    if (bits >= 8) { output.push((value >>> (bits - 8)) & 255); bits -= 8; }
+  }
+  return Buffer.from(output);
+}
+
 @Injectable()
 export class AuthService {
- constructor(private readonly database:DatabaseService){}
- private readonly attempts=new Map<string,{count:number;resetAt:number}>();
- private readonly secret=process.env.CONTROL_PLANE_SESSION_SECRET||'';
- private readonly email=process.env.CONTROL_PLANE_ADMIN_EMAIL||'';
- private readonly password=process.env.CONTROL_PLANE_ADMIN_PASSWORD||'';
- private encode(value:string){return Buffer.from(value).toString('base64url');}
- private sign(body:string){return createHmac('sha256',this.secret).update(body).digest('base64url');}
- private digest(value:string){return createHash('sha256').update(value).digest();}
- private equal(left:string,right:string){return timingSafeEqual(this.digest(left),this.digest(right));}
- private checkLimit(keys:string[]){const now=Date.now();for(const [key,item] of this.attempts)if(item.resetAt<=now)this.attempts.delete(key);if(this.attempts.size>20000){for(const key of this.attempts.keys()){this.attempts.delete(key);if(this.attempts.size<=15000)break;}}for(const key of keys){const item=this.attempts.get(key);if(item&&item.count>=8&&item.resetAt>now)throw new HttpException('Quá nhiều lần đăng nhập thất bại. Vui lòng thử lại sau 15 phút.',HttpStatus.TOO_MANY_REQUESTS);}}
- private recordFailure(keys:string[]){const now=Date.now();for(const key of keys){const item=this.attempts.get(key);this.attempts.set(key,{count:item&&item.resetAt>now?item.count+1:1,resetAt:item&&item.resetAt>now?item.resetAt:now+15*60*1000});}}
- private clearAttempts(keys:string[]){for(const key of keys)this.attempts.delete(key);}
- async login(emailInput:unknown,passwordInput:unknown,ip='unknown'){
-  const email=typeof emailInput==='string'?emailInput.trim().toLowerCase():'';
-  const password=typeof passwordInput==='string'?passwordInput:'';
-  const keys=[`ip:${ip||'unknown'}`,`email:${email||'unknown'}`,`pair:${ip||'unknown'}:${email||'unknown'}`];
-  this.checkLimit(keys);
-  if(!email||email.length>320||!password||password.length>1024){this.recordFailure(keys);throw new UnauthorizedException('Thông tin đăng nhập không đúng');}
-  await this.database.ensureSeed();
-  if(this.secret&&this.email&&this.password&&this.equal(email,this.email.trim().toLowerCase())&&this.equal(password,this.password)){this.clearAttempts(keys);return this.issue({sub:this.email,role:'super_admin'});}
-  const rows=await this.database.query<{email:string;role:'tenant_admin'|'mailbox_user';tenant_id:string;password_hash:string}>('select m.email,m.role,m.tenant_id::text as tenant_id,m.password_hash from tenant_members m join tenants t on t.id=m.tenant_id where lower(m.email)=lower($1) and m.status=\'active\' and t.status=\'active\' limit 1',[email]);
-  const member=rows?.[0];
-  if(!member||!member.password_hash||!this.verifyPassword(password,member.password_hash)){this.recordFailure(keys);throw new UnauthorizedException('Thông tin đăng nhập không đúng');}
-  this.clearAttempts(keys);return this.issue({sub:member.email,role:member.role,tenantId:member.tenant_id});
- }
- private issue(input:Omit<Session,'exp'>){const session:Session={...input,exp:Date.now()+8*60*60*1000};const body=this.encode(JSON.stringify(session));return {accessToken:`${body}.${this.sign(body)}`,expiresAt:session.exp,user:{email:session.sub,role:session.role,tenantId:session.tenantId}};}
- private verifyPassword(password:string,encoded:string){try{const [prefix,salt,hash]=encoded.split('$');if(prefix!=='scrypt'||!salt||!hash||!/^[a-f0-9]{64}$/i.test(hash))return false;const derived=scryptSync(password,salt,32);const expected=Buffer.from(hash,'hex');return derived.length===expected.length&&timingSafeEqual(derived,expected);}catch{return false;}}
- requireSuperAdmin(header?:string){const session=this.verify(header);if(session.role!=='super_admin')throw new ForbiddenException('Chỉ Super Admin được thực hiện thao tác này');return session;}
- async verifyActive(header?:string){const session=this.verify(header);if(session.role==='super_admin')return session;let rows;try{rows=await this.database.query<{member_status:string;tenant_status:string}>('select m.status as member_status,t.status as tenant_status from tenant_members m join tenants t on t.id=m.tenant_id where lower(m.email)=lower($1) and m.tenant_id=$2::uuid limit 1',[session.sub,session.tenantId]);}catch{throw new ServiceUnavailableException('Không thể kiểm tra trạng thái tài khoản. Vui lòng thử lại sau.');}const row=rows?.[0];if(!row||row.member_status!=='active'||row.tenant_status!=='active')throw new UnauthorizedException('Tài khoản đã bị khóa hoặc tenant không còn hoạt động. Vui lòng đăng nhập lại sau khi được mở khóa.');return session;}
- verify(header?:string){if(!header?.startsWith('Bearer ')) throw new UnauthorizedException('Cần đăng nhập');const token=header.slice(7);if(token.length>4096||!this.secret)throw new UnauthorizedException('Phiên đăng nhập không hợp lệ');const parts=token.split('.');if(parts.length!==2||!parts[0]||!parts[1])throw new UnauthorizedException('Phiên đăng nhập không hợp lệ');const [body,signature]=parts;const expected=this.sign(body);if(!this.equal(expected,signature))throw new UnauthorizedException('Phiên đăng nhập không hợp lệ');try{const session=JSON.parse(Buffer.from(body,'base64url').toString()) as Session;if(!session||typeof session.sub!=='string'||!session.sub||!['super_admin','tenant_admin','mailbox_user'].includes(session.role)||!Number.isFinite(session.exp)||session.exp<=Date.now()||(session.role!=='super_admin'&&(typeof session.tenantId!=='string'||!session.tenantId)))throw new Error('invalid');return session;}catch{throw new UnauthorizedException('Phiên đăng nhập không hợp lệ');}}
+  constructor(private readonly database: DatabaseService) {}
+
+  private readonly attempts = new Map<string, { count: number; resetAt: number }>();
+  private readonly pendingAuth = new Map<string, PendingAuth>();
+  private readonly memoryCredentials = new Map<string, Credential>();
+  private readonly secret = process.env.CONTROL_PLANE_SESSION_SECRET || '';
+  private readonly email = process.env.CONTROL_PLANE_ADMIN_EMAIL || '';
+  private readonly password = process.env.CONTROL_PLANE_ADMIN_PASSWORD || '';
+  private mfaSchemaReady?: Promise<boolean>;
+  private lastMfaLimitCleanup = 0;
+
+  private encode(value: string) { return Buffer.from(value).toString('base64url'); }
+  private sign(body: string) { return createHmac('sha256', this.secret).update(body).digest('base64url'); }
+  private digest(value: string) { return createHash('sha256').update(value).digest(); }
+  private equal(left: string, right: string) { return timingSafeEqual(this.digest(left), this.digest(right)); }
+  private mfaKey() {
+    if (!this.secret) throw new ServiceUnavailableException('Chưa cấu hình khóa mã hóa MFA. Liên hệ quản trị viên hệ thống.');
+    return scryptSync(this.secret, '30nice-control-plane-mfa-v1', 32);
+  }
+
+  private checkLimit(keys: string[]) {
+    const now = Date.now();
+    for (const [key, item] of this.attempts) if (item.resetAt <= now) this.attempts.delete(key);
+    if (this.attempts.size > 20_000) for (const key of this.attempts.keys()) { this.attempts.delete(key); if (this.attempts.size <= 15_000) break; }
+    for (const key of keys) {
+      const item = this.attempts.get(key);
+      if (item && item.count >= 8 && item.resetAt > now) throw new HttpException('Quá nhiều lần đăng nhập thất bại. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+  }
+  private recordFailure(keys: string[]) {
+    const now = Date.now();
+    for (const key of keys) {
+      const item = this.attempts.get(key);
+      this.attempts.set(key, { count: item && item.resetAt > now ? item.count + 1 : 1, resetAt: item && item.resetAt > now ? item.resetAt : now + 15 * 60 * 1000 });
+    }
+  }
+  private clearAttempts(keys: string[]) { for (const key of keys) this.attempts.delete(key); }
+
+  private async ensureMfaSchema() {
+    if (!this.database) return false;
+    this.mfaSchemaReady ??= this.database.query(`
+      CREATE TABLE IF NOT EXISTS mfa_credentials (
+        account_key TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        tenant_id UUID,
+        secret_ciphertext TEXT NOT NULL,
+        enabled_at TIMESTAMPTZ,
+        last_totp_counter BIGINT,
+        recovery_hashes JSONB NOT NULL DEFAULT '[]'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS auth_failure_limits (
+        limit_key TEXT PRIMARY KEY,
+        failure_count INTEGER NOT NULL DEFAULT 0,
+        reset_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS auth_failure_limits_reset_at_idx ON auth_failure_limits(reset_at)
+    `).then(result => result !== null);
+    try { return await this.mfaSchemaReady; }
+    catch (error) { this.mfaSchemaReady = undefined; throw error; }
+  }
+
+  private async reserveMfaAttempt(keys: string[]) {
+    if (!(await this.ensureMfaSchema())) {
+      this.checkLimit(keys);
+      this.recordFailure(keys);
+      return;
+    }
+    const hashedKeys = keys.map(key => `mfa:${createHash('sha256').update(key).digest('hex')}`);
+    await this.database.transaction(async query => {
+      for (const key of [...hashedKeys].sort()) {
+        await query('INSERT INTO auth_failure_limits(limit_key,failure_count,reset_at) VALUES ($1,0,now()+interval \'15 minutes\') ON CONFLICT (limit_key) DO NOTHING', [key]);
+        const rows = await query<{ failure_count: number; reset_at: Date; locked_now: Date }>('SELECT failure_count,reset_at,clock_timestamp() AS locked_now FROM auth_failure_limits WHERE limit_key=$1 FOR UPDATE', [key]);
+        const row = rows[0];
+        if (!row) throw new ServiceUnavailableException('Không thể kiểm tra giới hạn xác thực MFA. Vui lòng thử lại.');
+        if (new Date(row.reset_at).getTime() <= new Date(row.locked_now).getTime()) {
+          await query(`UPDATE auth_failure_limits SET failure_count=1,reset_at=clock_timestamp()+interval '15 minutes',updated_at=clock_timestamp() WHERE limit_key=$1`, [key]);
+        } else {
+          if (Number(row.failure_count) >= 8) throw new HttpException('Quá nhiều lần đăng nhập thất bại. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
+          await query('UPDATE auth_failure_limits SET failure_count=failure_count+1,updated_at=clock_timestamp() WHERE limit_key=$1', [key]);
+        }
+      }
+      return [];
+    });
+    if (Date.now() - this.lastMfaLimitCleanup > 10 * 60_000) {
+      await this.database.query('DELETE FROM auth_failure_limits WHERE reset_at < now() - interval \'1 day\'');
+      this.lastMfaLimitCleanup = Date.now();
+    }
+  }
+
+  private async clearMfaAttempts(keys: string[]) {
+    if (!(await this.ensureMfaSchema())) {
+      this.clearAttempts(keys);
+      return;
+    }
+    const hashedKeys = keys.map(key => `mfa:${createHash('sha256').update(key).digest('hex')}`);
+    await this.database.query('DELETE FROM auth_failure_limits WHERE limit_key=ANY($1::text[])', [hashedKeys]);
+  }
+
+  private encryptSecret(secret: string) {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.mfaKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
+    return [iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), encrypted.toString('base64url')].join('.');
+  }
+  private decryptSecret(value: string) {
+    const [iv, tag, encrypted] = value.split('.');
+    if (!iv || !tag || !encrypted) throw new Error('Invalid encrypted MFA secret');
+    const decipher = createDecipheriv('aes-256-gcm', this.mfaKey(), Buffer.from(iv, 'base64url'));
+    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+    return Buffer.concat([decipher.update(Buffer.from(encrypted, 'base64url')), decipher.final()]).toString('utf8');
+  }
+
+  private async credential(accountKey: string) {
+    if (await this.ensureMfaSchema()) {
+      const rows = await this.database.query<Credential>('SELECT secret_ciphertext, enabled_at, last_totp_counter, recovery_hashes FROM mfa_credentials WHERE account_key=$1 LIMIT 1', [accountKey]);
+      return rows?.[0];
+    }
+    return this.memoryCredentials.get(accountKey);
+  }
+
+  private newPending(identity: Identity, kind: 'setup' | 'login', sourceIp = 'unknown', secret?: string) {
+    const now = Date.now();
+    for (const [token, pending] of this.pendingAuth) if (pending.expiresAt <= now) this.pendingAuth.delete(token);
+    if (this.pendingAuth.size >= 10_000) throw new ServiceUnavailableException('Tạm thời không thể tạo phiên xác thực MFA. Vui lòng thử lại.');
+    const token = randomBytes(32).toString('base64url');
+    this.pendingAuth.set(token, { ...identity, kind, sourceIp: (sourceIp || 'unknown').slice(0, 64), secret, expiresAt: now + 5 * 60_000, failures: 0 });
+    return token;
+  }
+  private pending(token: unknown, kind: 'setup' | 'login') {
+    if (typeof token !== 'string' || token.length > 100) throw new UnauthorizedException('Phiên MFA không hợp lệ. Hãy đăng nhập lại.');
+    const value = this.pendingAuth.get(token);
+    if (!value || value.expiresAt <= Date.now() || value.kind !== kind) {
+      this.pendingAuth.delete(token);
+      throw new UnauthorizedException('Phiên MFA đã hết hạn. Hãy đăng nhập lại.');
+    }
+    return { token, value };
+  }
+  private failPending(token: string, value: PendingAuth) {
+    value.failures++;
+    if (value.failures >= 8) this.pendingAuth.delete(token);
+  }
+
+  async login(emailInput: unknown, passwordInput: unknown, ip = 'unknown') {
+    const email = typeof emailInput === 'string' ? emailInput.trim().toLowerCase() : '';
+    const password = typeof passwordInput === 'string' ? passwordInput : '';
+    const keys = [`ip:${ip || 'unknown'}`, `email:${email || 'unknown'}`, `pair:${ip || 'unknown'}:${email || 'unknown'}`];
+    this.checkLimit(keys);
+    if (!email || email.length > 320 || !password || password.length > 1024) {
+      this.recordFailure(keys);
+      throw new UnauthorizedException('Thông tin đăng nhập không đúng');
+    }
+    await this.database.ensureSeed();
+
+    let identity: Identity | undefined;
+    if (this.secret && this.email && this.password && this.equal(email, this.email.trim().toLowerCase()) && this.equal(password, this.password)) {
+      identity = { accountKey: `admin:${this.email.trim().toLowerCase()}`, sub: this.email, role: 'super_admin' };
+    } else {
+      const rows = await this.database.query<{ id: string; email: string; role: 'tenant_admin' | 'mailbox_user'; tenant_id: string; password_hash: string }>(
+        'select m.id::text as id,m.email,m.role,m.tenant_id::text as tenant_id,m.password_hash from tenant_members m join tenants t on t.id=m.tenant_id where lower(m.email)=lower($1) and m.status=\'active\' and t.status=\'active\' limit 1', [email]);
+      const member = rows?.[0];
+      if (member?.password_hash && this.verifyPassword(password, member.password_hash)) {
+        identity = { accountKey: `member:${member.id}`, sub: member.email, role: member.role, tenantId: member.tenant_id };
+      }
+    }
+    if (!identity) {
+      this.recordFailure(keys);
+      throw new UnauthorizedException('Thông tin đăng nhập không đúng');
+    }
+    this.clearAttempts(keys);
+    const credential = await this.credential(identity.accountKey);
+    if (credential?.enabled_at) return { mfaRequired: true, challengeToken: this.newPending(identity, 'login', ip) };
+    return { mfaSetupRequired: true, setupToken: this.newPending(identity, 'setup', ip) };
+  }
+
+  private issue(input: Omit<Session, 'exp'>) {
+    const session: Session = { sub: input.sub, role: input.role, tenantId: input.tenantId, mfaAt: Date.now(), exp: Date.now() + 8 * 60 * 60 * 1000 };
+    const body = this.encode(JSON.stringify(session));
+    return { accessToken: `${body}.${this.sign(body)}`, expiresAt: session.exp, user: { email: session.sub, role: session.role, tenantId: session.tenantId } };
+  }
+
+  private totpCounter(secret: string, codeInput: unknown, now = Date.now()) {
+    const code = typeof codeInput === 'string' ? codeInput.replace(/\s/g, '') : '';
+    if (!/^\d{6}$/.test(code)) return null;
+    const key = base32Decode(secret);
+    const current = Math.floor(now / 30_000);
+    for (const counter of [current, current - 1, current + 1]) {
+      if (counter < 0) continue;
+      const message = Buffer.alloc(8);
+      message.writeBigUInt64BE(BigInt(counter));
+      const digest = createHmac('sha1', key).update(message).digest();
+      const offset = digest[digest.length - 1] & 15;
+      const binary = ((digest[offset] & 127) << 24) | ((digest[offset + 1] & 255) << 16) | ((digest[offset + 2] & 255) << 8) | (digest[offset + 3] & 255);
+      const expected = String(binary % 1_000_000).padStart(6, '0');
+      if (this.equal(expected, code)) return counter;
+    }
+    return null;
+  }
+  private generateRecoveryCodes() {
+    return Array.from({ length: 10 }, () => randomBytes(10).toString('hex').match(/.{1,5}/g)!.join('-').toUpperCase());
+  }
+  private recoveryHash(code: string) { return createHash('sha256').update(code.replace(/[^a-f0-9]/gi, '').toLowerCase()).digest('hex'); }
+
+  async beginMfaSetup(setupToken: unknown) {
+    const { value } = this.pending(setupToken, 'setup');
+    const secret = base32Encode(randomBytes(20));
+    value.secret = secret;
+    const label = encodeURIComponent(`${value.sub} (${value.role === 'super_admin' ? '30NICE' : '30NICE Tenant'})`);
+    const issuer = encodeURIComponent('30NICE Mail Cloud');
+    return { secret, issuer: '30NICE Mail Cloud', account: value.sub, otpauthUrl: `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30` };
+  }
+
+  async completeMfaSetup(setupToken: unknown, code: unknown) {
+    const { token, value } = this.pending(setupToken, 'setup');
+    const failureKeys = [`mfa:ip:${value.sourceIp}`, `mfa:account:${value.accountKey}`];
+    await this.reserveMfaAttempt(failureKeys);
+    if (!value.secret) throw new BadRequestException('Hãy tạo khóa xác thực trước khi xác nhận');
+    const counter = this.totpCounter(value.secret, code);
+    if (counter === null) { this.failPending(token, value); throw new UnauthorizedException('Mã xác thực không đúng hoặc đã hết hạn'); }
+    const recoveryCodes = this.generateRecoveryCodes();
+    const credential: Credential = { secret_ciphertext: this.encryptSecret(value.secret), enabled_at: new Date(), last_totp_counter: counter, recovery_hashes: recoveryCodes.map(codeValue => this.recoveryHash(codeValue)) };
+    if (await this.ensureMfaSchema()) {
+      const inserted = await this.database.query(`INSERT INTO mfa_credentials (account_key,email,tenant_id,secret_ciphertext,enabled_at,last_totp_counter,recovery_hashes)
+        VALUES ($1,$2,$3,$4,now(),$5,$6::jsonb)
+        ON CONFLICT (account_key) DO UPDATE SET email=EXCLUDED.email,tenant_id=EXCLUDED.tenant_id,secret_ciphertext=EXCLUDED.secret_ciphertext,enabled_at=now(),last_totp_counter=EXCLUDED.last_totp_counter,recovery_hashes=EXCLUDED.recovery_hashes,updated_at=now()
+        WHERE mfa_credentials.enabled_at IS NULL RETURNING account_key`, [value.accountKey, value.sub, value.tenantId || null, credential.secret_ciphertext, counter, JSON.stringify(credential.recovery_hashes)]);
+      if (!inserted?.length) {
+        this.pendingAuth.delete(token);
+        throw new UnauthorizedException('MFA đã được bật trong một phiên khác. Hãy đăng nhập lại.');
+      }
+    } else {
+      if (this.memoryCredentials.get(value.accountKey)?.enabled_at) {
+        this.pendingAuth.delete(token);
+        throw new UnauthorizedException('MFA đã được bật trong một phiên khác. Hãy đăng nhập lại.');
+      }
+      this.memoryCredentials.set(value.accountKey, credential);
+    }
+    this.pendingAuth.delete(token);
+    await this.clearMfaAttempts(failureKeys);
+    return { ...this.issue(value), recoveryCodes };
+  }
+
+  async verifyMfa(challengeToken: unknown, codeInput: unknown) {
+    const { token, value } = this.pending(challengeToken, 'login');
+    const failureKeys = [`mfa:ip:${value.sourceIp}`, `mfa:account:${value.accountKey}`];
+    await this.reserveMfaAttempt(failureKeys);
+    const credential = await this.credential(value.accountKey);
+    if (!credential?.enabled_at) { this.pendingAuth.delete(token); throw new UnauthorizedException('MFA chưa được bật. Hãy đăng nhập lại để thiết lập.'); }
+    let accepted = false;
+    const code = typeof codeInput === 'string' ? codeInput.trim() : '';
+    const counter = this.totpCounter(this.decryptSecret(credential.secret_ciphertext), code);
+    if (counter !== null) {
+      if (await this.ensureMfaSchema()) {
+        const changed = await this.database.query(`UPDATE mfa_credentials SET last_totp_counter=$2,updated_at=now() WHERE account_key=$1 AND (last_totp_counter IS NULL OR last_totp_counter < $2) RETURNING account_key`, [value.accountKey, counter]);
+        accepted = Boolean(changed?.length);
+      } else if (credential.last_totp_counter == null || Number(credential.last_totp_counter) < counter) {
+        credential.last_totp_counter = counter;
+        accepted = true;
+      }
+    }
+    if (!accepted) {
+      const hash = this.recoveryHash(code);
+      const index = credential.recovery_hashes.findIndex(item => this.equal(item, hash));
+      if (index >= 0) {
+        const remaining = [...credential.recovery_hashes];
+        remaining.splice(index, 1);
+        if (await this.ensureMfaSchema()) {
+          const changed = await this.database.query(`UPDATE mfa_credentials SET recovery_hashes=COALESCE((
+            SELECT jsonb_agg(item.code) FROM jsonb_array_elements_text(mfa_credentials.recovery_hashes) AS item(code) WHERE item.code <> $2
+          ), '[]'::jsonb),updated_at=now() WHERE account_key=$1 AND recovery_hashes @> jsonb_build_array($2) RETURNING account_key`, [value.accountKey, credential.recovery_hashes[index]]);
+          accepted = Boolean(changed?.length);
+        } else { credential.recovery_hashes = remaining; accepted = true; }
+      }
+    }
+    if (!accepted) { this.failPending(token, value); throw new UnauthorizedException('Mã xác thực không đúng hoặc đã được sử dụng'); }
+    await this.clearMfaAttempts(failureKeys);
+    this.pendingAuth.delete(token);
+    return this.issue(value);
+  }
+
+  private verifyPassword(password: string, encoded: string) {
+    try {
+      const [prefix, salt, hash] = encoded.split('$');
+      if (prefix !== 'scrypt' || !salt || !hash || !/^[a-f0-9]{64}$/i.test(hash)) return false;
+      const derived = scryptSync(password, salt, 32);
+      const expected = Buffer.from(hash, 'hex');
+      return derived.length === expected.length && timingSafeEqual(derived, expected);
+    } catch { return false; }
+  }
+
+  async mfaStatus(header?: string) {
+    const session = this.verify(header);
+    const accountKey = session.role === 'super_admin' ? `admin:${session.sub.trim().toLowerCase()}` : await this.memberAccountKey(session);
+    const credential = await this.credential(accountKey);
+    return { enabled: Boolean(credential?.enabled_at), recoveryCodesRemaining: credential?.recovery_hashes.length || 0 };
+  }
+  private async memberAccountKey(session: Session) {
+    const rows = await this.database.query<{ id: string }>('SELECT id::text AS id FROM tenant_members WHERE lower(email)=lower($1) AND tenant_id=$2::uuid LIMIT 1', [session.sub, session.tenantId]);
+    if (!rows?.[0]) throw new UnauthorizedException('Tài khoản không còn hoạt động');
+    return `member:${rows[0].id}`;
+  }
+
+  requireSuperAdmin(header?: string) { const session = this.verify(header); if (session.role !== 'super_admin') throw new ForbiddenException('Chỉ Super Admin được thực hiện thao tác này'); return session; }
+  async verifyActive(header?: string) {
+    const session = this.verify(header);
+    if (!Number.isFinite(session.mfaAt)) throw new UnauthorizedException('Phiên đăng nhập cũ chưa xác thực hai bước. Vui lòng đăng nhập lại để hoàn tất MFA.');
+    if (session.role === 'super_admin') return session;
+    let rows;
+    try { rows = await this.database.query<{ member_status: string; tenant_status: string }>('select m.status as member_status,t.status as tenant_status from tenant_members m join tenants t on t.id=m.tenant_id where lower(m.email)=lower($1) and m.tenant_id=$2::uuid limit 1', [session.sub, session.tenantId]); }
+    catch { throw new ServiceUnavailableException('Không thể kiểm tra trạng thái tài khoản. Vui lòng thử lại sau.'); }
+    const row = rows?.[0];
+    if (!row || row.member_status !== 'active' || row.tenant_status !== 'active') throw new UnauthorizedException('Tài khoản đã bị khóa hoặc tenant không còn hoạt động. Vui lòng đăng nhập lại sau khi được mở khóa.');
+    return session;
+  }
+  verify(header?: string) {
+    if (!header?.startsWith('Bearer ')) throw new UnauthorizedException('Cần đăng nhập');
+    const token = header.slice(7);
+    if (token.length > 4096 || !this.secret) throw new UnauthorizedException('Phiên đăng nhập không hợp lệ');
+    const parts = token.split('.');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) throw new UnauthorizedException('Phiên đăng nhập không hợp lệ');
+    const [body, signature] = parts;
+    if (!this.equal(this.sign(body), signature)) throw new UnauthorizedException('Phiên đăng nhập không hợp lệ');
+    try {
+      const session = JSON.parse(Buffer.from(body, 'base64url').toString()) as Session;
+      if (!session || typeof session.sub !== 'string' || !session.sub || !['super_admin', 'tenant_admin', 'mailbox_user'].includes(session.role) || !Number.isFinite(session.exp) || session.exp <= Date.now() || (session.role !== 'super_admin' && (typeof session.tenantId !== 'string' || !session.tenantId))) throw new Error('invalid');
+      return session;
+    } catch { throw new UnauthorizedException('Phiên đăng nhập không hợp lệ'); }
+  }
 }
