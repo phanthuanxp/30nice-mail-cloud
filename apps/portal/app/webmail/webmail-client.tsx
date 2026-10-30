@@ -1,6 +1,7 @@
 'use client';
 
 import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { updateMessageFlagState } from './webmail-state';
 import { Archive, ArrowLeft, Bold, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File as FileIcon, Forward, Image as ImageIcon, Inbox, Italic, Link2, List, ListOrdered, LogOut, Mail, MailOpen, Menu, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Trash2, Underline, X } from 'lucide-react';
 
 type Folder = { path: string; name: string; specialUse: string | null; messages: number; unread: number };
@@ -413,12 +414,12 @@ export default function WebmailClient() {
     return () => window.removeEventListener('keydown', handleShortcut);
   }, [activePanel, busy, closeComposer, compose, items, mobileNav, openMessage, selected]);
 
-  async function updateFlag(item: MailItem, flag: string) {
+  async function updateFlag(item: MailItem, flag: 'seen' | 'unseen' | 'flagged' | 'unflagged') {
     try {
       const messageFolder = item.folder || folder;
       await request(`/messages/${item.uid}/flags`, { method: 'POST', body: JSON.stringify({ folder: messageFolder, flag }) });
-      setItems(current => current.map(message => messageKey(message) === messageKey(item) ? { ...message, flagged: flag === 'flagged', seen: flag === 'seen' ? true : flag === 'unseen' ? false : message.seen } : message));
-      if (selected?.uid === item.uid) setSelected(current => current ? { ...current, flagged: flag === 'flagged', seen: flag === 'seen' ? true : flag === 'unseen' ? false : current.seen } : null);
+      setItems(current => current.map(message => messageKey(message) === messageKey(item) ? { ...message, ...updateMessageFlagState(message, flag) } : message));
+      if (selected?.uid === item.uid) setSelected(current => current ? { ...current, ...updateMessageFlagState(current, flag) } : null);
       void loadFolders();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không cập nhật được thư.'); }
   }
