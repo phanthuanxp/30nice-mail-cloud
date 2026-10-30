@@ -27,6 +27,7 @@ const expectReject = async (promise, type) => assert.rejects(promise, error => e
 class FakeDatabase {
   credentials = new Map();
   authFailureLimits = new Map();
+  transactionQueue = Promise.resolve();
   tenantStatus = 'active';
   memberStatus = 'active';
 
@@ -69,22 +70,31 @@ class FakeDatabase {
     return [];
   }
   async transaction(work) {
-    return work(async (sql, values = []) => {
+    const previous = this.transactionQueue;
+    let release;
+    this.transactionQueue = new Promise(resolve => { release = resolve; });
+    await previous;
+    try { return await work(async (sql, values = []) => {
       if (sql.includes('INSERT INTO auth_failure_limits')) {
         if (!this.authFailureLimits.has(values[0])) this.authFailureLimits.set(values[0], { count: 0 });
         return [];
       }
-      if (sql.includes('SELECT failure_count FROM auth_failure_limits')) {
+      if (sql.includes('SELECT failure_count,reset_at,clock_timestamp() AS locked_now')) {
         const row = this.authFailureLimits.get(values[0]);
-        return row ? [{ failure_count: row.count }] : [];
+        return row ? [{ failure_count: row.count, reset_at: new Date(Date.now() + 900_000), locked_now: new Date() }] : [];
       }
-      if (sql.includes('UPDATE auth_failure_limits SET')) {
+      if (sql.includes('UPDATE auth_failure_limits SET failure_count=1')) {
+        const row = this.authFailureLimits.get(values[0]);
+        if (row) row.count = 1;
+        return [];
+      }
+      if (sql.includes('UPDATE auth_failure_limits SET failure_count=failure_count+1')) {
         const row = this.authFailureLimits.get(values[0]);
         if (row) row.count++;
         return [];
       }
       return [];
-    });
+    }); } finally { release(); }
   }
 }
 
@@ -155,6 +165,13 @@ async function main() {
 
   const tenant = await enroll(auth, 'member@example.com', 'tenant-user-password', '127.0.0.2');
   assert.equal(auth.verify(`Bearer ${tenant.accessToken}`).role, 'tenant_admin');
+  const nearbyTenantCodes = [totp(tenant.secret, Date.now() - 30_000), totp(tenant.secret), totp(tenant.secret, Date.now() + 30_000)];
+  let wrongTenantCode = '000000';
+  while (nearbyTenantCodes.includes(wrongTenantCode)) wrongTenantCode = String(Number(wrongTenantCode) + 1).padStart(6, '0');
+  const burstChallenges = await Promise.all(Array.from({ length: 20 }, () => auth.login('member@example.com', 'tenant-user-password', '192.0.2.88')));
+  const burstResults = await Promise.allSettled(burstChallenges.map(challenge => auth.verifyMfa(challenge.challengeToken, wrongTenantCode)));
+  assert.equal(burstResults.filter(result => result.status === 'rejected' && result.reason instanceof UnauthorizedException).length, 8, 'only eight simultaneous MFA guesses may pass the shared attempt reservation');
+  assert.equal(burstResults.filter(result => result.status === 'rejected' && result.reason instanceof HttpException && result.reason.getStatus() === 429).length, 12, 'excess simultaneous MFA guesses must be rate limited');
   assert.equal((await auth.verifyActive(`Bearer ${tenant.accessToken}`)).role, 'tenant_admin');
   assert.throws(() => auth.requireSuperAdmin(`Bearer ${tenant.accessToken}`), ForbiddenException);
   await expectReject(auth.login('member@example.com', 'wrong-password', '127.0.0.3'), UnauthorizedException);

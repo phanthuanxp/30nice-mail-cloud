@@ -102,20 +102,9 @@ export class AuthService {
     catch (error) { this.mfaSchemaReady = undefined; throw error; }
   }
 
-  private async checkMfaLimit(keys: string[]) {
+  private async reserveMfaAttempt(keys: string[]) {
     if (!(await this.ensureMfaSchema())) {
       this.checkLimit(keys);
-      return;
-    }
-    const hashedKeys = keys.map(key => `mfa:${createHash('sha256').update(key).digest('hex')}`);
-    const active = await this.database.query<{ blocked: boolean }>(`SELECT EXISTS (
-      SELECT 1 FROM auth_failure_limits WHERE limit_key = ANY($1::text[]) AND reset_at > now() AND failure_count >= 8
-    ) AS blocked`, [hashedKeys]);
-    if (active?.[0]?.blocked) throw new HttpException('Quá nhiều lần đăng nhập thất bại. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
-  }
-
-  private async recordMfaFailure(keys: string[]) {
-    if (!(await this.ensureMfaSchema())) {
       this.recordFailure(keys);
       return;
     }
@@ -123,12 +112,15 @@ export class AuthService {
     await this.database.transaction(async query => {
       for (const key of [...hashedKeys].sort()) {
         await query('INSERT INTO auth_failure_limits(limit_key,failure_count,reset_at) VALUES ($1,0,now()+interval \'15 minutes\') ON CONFLICT (limit_key) DO NOTHING', [key]);
-        const rows = await query<{ failure_count: number }>('SELECT failure_count FROM auth_failure_limits WHERE limit_key=$1 FOR UPDATE', [key]);
-        if (!rows.length) continue;
-        await query(`UPDATE auth_failure_limits SET
-          failure_count=CASE WHEN reset_at <= now() THEN 1 ELSE failure_count+1 END,
-          reset_at=CASE WHEN reset_at <= now() THEN now()+interval '15 minutes' ELSE reset_at END,
-          updated_at=now() WHERE limit_key=$1`, [key]);
+        const rows = await query<{ failure_count: number; reset_at: Date; locked_now: Date }>('SELECT failure_count,reset_at,clock_timestamp() AS locked_now FROM auth_failure_limits WHERE limit_key=$1 FOR UPDATE', [key]);
+        const row = rows[0];
+        if (!row) throw new ServiceUnavailableException('Không thể kiểm tra giới hạn xác thực MFA. Vui lòng thử lại.');
+        if (new Date(row.reset_at).getTime() <= new Date(row.locked_now).getTime()) {
+          await query(`UPDATE auth_failure_limits SET failure_count=1,reset_at=clock_timestamp()+interval '15 minutes',updated_at=clock_timestamp() WHERE limit_key=$1`, [key]);
+        } else {
+          if (Number(row.failure_count) >= 8) throw new HttpException('Quá nhiều lần đăng nhập thất bại. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
+          await query('UPDATE auth_failure_limits SET failure_count=failure_count+1,updated_at=clock_timestamp() WHERE limit_key=$1', [key]);
+        }
       }
       return [];
     });
@@ -186,9 +178,8 @@ export class AuthService {
     }
     return { token, value };
   }
-  private async failPending(token: string, value: PendingAuth) {
+  private failPending(token: string, value: PendingAuth) {
     value.failures++;
-    await this.recordMfaFailure([`mfa:ip:${value.sourceIp}`, `mfa:account:${value.accountKey}`]);
     if (value.failures >= 8) this.pendingAuth.delete(token);
   }
 
@@ -264,10 +255,10 @@ export class AuthService {
   async completeMfaSetup(setupToken: unknown, code: unknown) {
     const { token, value } = this.pending(setupToken, 'setup');
     const failureKeys = [`mfa:ip:${value.sourceIp}`, `mfa:account:${value.accountKey}`];
-    await this.checkMfaLimit(failureKeys);
+    await this.reserveMfaAttempt(failureKeys);
     if (!value.secret) throw new BadRequestException('Hãy tạo khóa xác thực trước khi xác nhận');
     const counter = this.totpCounter(value.secret, code);
-    if (counter === null) { await this.failPending(token, value); throw new UnauthorizedException('Mã xác thực không đúng hoặc đã hết hạn'); }
+    if (counter === null) { this.failPending(token, value); throw new UnauthorizedException('Mã xác thực không đúng hoặc đã hết hạn'); }
     const recoveryCodes = this.generateRecoveryCodes();
     const credential: Credential = { secret_ciphertext: this.encryptSecret(value.secret), enabled_at: new Date(), last_totp_counter: counter, recovery_hashes: recoveryCodes.map(codeValue => this.recoveryHash(codeValue)) };
     if (await this.ensureMfaSchema()) {
@@ -294,7 +285,7 @@ export class AuthService {
   async verifyMfa(challengeToken: unknown, codeInput: unknown) {
     const { token, value } = this.pending(challengeToken, 'login');
     const failureKeys = [`mfa:ip:${value.sourceIp}`, `mfa:account:${value.accountKey}`];
-    await this.checkMfaLimit(failureKeys);
+    await this.reserveMfaAttempt(failureKeys);
     const credential = await this.credential(value.accountKey);
     if (!credential?.enabled_at) { this.pendingAuth.delete(token); throw new UnauthorizedException('MFA chưa được bật. Hãy đăng nhập lại để thiết lập.'); }
     let accepted = false;
@@ -323,7 +314,7 @@ export class AuthService {
         } else { credential.recovery_hashes = remaining; accepted = true; }
       }
     }
-    if (!accepted) { await this.failPending(token, value); throw new UnauthorizedException('Mã xác thực không đúng hoặc đã được sử dụng'); }
+    if (!accepted) { this.failPending(token, value); throw new UnauthorizedException('Mã xác thực không đúng hoặc đã được sử dụng'); }
     await this.clearMfaAttempts(failureKeys);
     this.pendingAuth.delete(token);
     return this.issue(value);
