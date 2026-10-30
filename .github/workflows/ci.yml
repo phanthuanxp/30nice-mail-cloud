@@ -27,6 +27,31 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Audit production dependencies
+        shell: bash
+        run: |
+          set +e
+          npm audit --omit=dev --json > "$RUNNER_TEMP/npm-audit.json"
+          audit_status=$?
+          node - "$RUNNER_TEMP/npm-audit.json" <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const vulnerabilities = Object.entries(report.vulnerabilities || {}).map(([name, item]) => ({
+            name,
+            severity: item.severity,
+            direct: item.isDirect,
+            range: item.range,
+            fixAvailable: item.fixAvailable,
+            advisories: (item.via || []).filter(value => typeof value === 'object').map(value => ({
+              title: value.title,
+              url: value.url,
+              range: value.range,
+              severity: value.severity,
+            })),
+          }));
+          console.log(JSON.stringify({ summary: report.metadata?.vulnerabilities, vulnerabilities }, null, 2));
+          NODE
+          exit "$audit_status"
       - name: Type check
         run: npm run typecheck
       - name: Verify authentication and authorization

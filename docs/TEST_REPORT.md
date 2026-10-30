@@ -1,41 +1,26 @@
-# Test report
+# Verification report
 
-## PASS
+## Verified on 2026-10-30
 
-- `npm install --no-audit --no-fund` — completed; 382 packages added.
-- `npm run build` — Next.js production build completed successfully.
-- `npm run build:api` — NestJS compilation completed successfully.
-- `npm run typecheck` — TypeScript checks completed successfully after Sprint 0 scripts were added.
-- Sprint 1 API foundation — typecheck, API build and Portal build completed successfully.
+GitHub Actions **Verify Mail Cloud** passed on main commit `8e499ef303c9a95ecae6362e660c75ef09bec4ee` (run `41034751717`). It ran:
 
-## PARTIAL / BLOCKED
+- Locked dependency installation and TypeScript checks for API and portal.
+- Authentication/MFA/RBAC, mailbox and tenant provisioning smoke tests.
+- Mailcow adapter smoke tests.
+- Webmail content, BCC, contacts, search, send limits, cross-instance login limits and Trash deletion smoke tests.
+- Next.js portal production build and Bash syntax check for the guarded VPS release script.
 
-- Shell HTTP checks to localhost were blocked by the Windows runner with socket access denied.
-- Browser opening of localhost timed out after the transient dev sessions were reclaimed by the runner; the app build itself passed.
-- WSL2 status returned `WSL/E_ACCESSDENIED`; Docker availability is recorded, but the optional compose services were not started.
+The same `package-lock.json` passed `npm audit --omit=dev` in PR #26 on 2026-10-30. This covers runtime dependencies only; a full audit including development/build dependencies has not been verified in this run. PR #26 adds the audit to regular CI and the manual production release gate.
 
-## Scope confirmation
+## Production and deployment status
 
-The original local-first phase did not change DNS/MX or handle production secrets. A later explicit deployment approval enabled the VPS integration; the current production health check confirms Mailcow is connected. End-to-end real email delivery and external provider deliverability are not claimed without dedicated tests.
+- The latest directly recorded VPS health and deployment check in the prior report was 2026-10-27 at commit `be8098e`. It reported API health, PostgreSQL, Mailcow and the admin site responding at that time. That is historical evidence and does not verify current production.
+- A guarded, manual-only GitHub Actions release workflow was merged at commit `fc8dca0`. It targets the existing PM2 paths, checks the selected main revision, runs verification, enforces SSH host-key checking, and performs local/public health checks after deploy.
+- No `workflow_dispatch` deployment run is recorded as of 2026-10-30. The current production revision and live health have therefore not been verified from this workflow. GitHub's `production` environment, reviewer and SSH secrets must be configured before a release can run; see [VPS release runbook](VPS_RELEASE_RUNBOOK.md).
+- The web tool could not access `https://admin.30nice.vn/api/health` during this review.
 
-## Production integration verification (2026-10-27)
+## Scope and remaining verification
 
-- `npm run typecheck` — PASS for Portal and API.
-- `npm run build` and `npm run build:api` — PASS.
-- VPS `GET /health` — PASS: `productionReady:true`, PostgreSQL connected, Mailcow configured/healthy with HTTP 200.
-- `https://admin.30nice.vn` — PASS: HTTP 200 after PM2 restart.
-- GitHub/VPS deployment — PASS at commit `be8098e`.
-- Mailcow create/update mailbox calls are server-side and use bounded request timeouts; destructive delivery and Gmail/Outlook deliverability tests remain unverified.
-- Mailcow dry-run smoke test — PASS: `MAIL_ADAPTER_MODE=dry-run` returned dry-run success for domain and mailbox operations without requiring an API URL or key.
-- `npm run test:mailcow` — PASS: mocked production adapter verified health, add-domain, add-mailbox and edit-mailbox endpoints; the server-only API key was present only in the outbound server request.
-
-## Dependency security audit (2026-10-27)
-
-- `npm audit --omit=dev` — REVIEW REQUIRED: 9 advisories (5 moderate, 4 high) were reported through NestJS/Express dependencies and the Next/PostCSS toolchain.
-- `npm audit fix --force` was not run because npm reports breaking major upgrades; remediation must be handled as a dedicated dependency upgrade with build and production regression tests.
-
-## Sprint 1 limitation
-
-The new CRUD surface uses resettable in-memory fixtures. PostgreSQL persistence, authentication and full tenant-member RBAC remain the next implementation step; this deployment is not a production email control plane yet.
-
-RBAC smoke checks: unscoped tenant listing is denied; tenant-admin listing is scoped; audit endpoint requires `super_admin`.
+- CI smoke tests validate application behavior using test doubles where external Mailcow, IMAP, SMTP, PostgreSQL or VPS services are not contacted. Green CI does not prove external mail delivery, inbox placement, production mailbox provisioning, or current VPS health.
+- Gmail/Outlook deliverability, SMTP port 25 behavior, backups and restore drills, operational monitoring/alerting, billing and legal readiness still require separate verification.
+- The Windows local setup and running-site observations in older reports are historical; they were not repeated in this CI run.
