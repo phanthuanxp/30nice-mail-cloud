@@ -4,7 +4,17 @@ const {WebmailService}=require('../apps/api/dist/webmail.service.js');
 
 const fs=require('node:fs');
 const path=require('node:path');
+const ts=require('typescript');
+const webmailStateSource=fs.readFileSync(path.join(__dirname,'../apps/portal/app/webmail/webmail-state.ts'),'utf8');
+const webmailStateCode=ts.transpileModule(webmailStateSource,{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText;
+const webmailStateModule={exports:{}};
+new Function('exports','require','module',webmailStateCode)(webmailStateModule.exports,require,webmailStateModule);
+const {updateMessageFlagState}=webmailStateModule.exports;
+assert.deepEqual(updateMessageFlagState({seen:false,flagged:true},'seen'),{seen:true,flagged:true});
+assert.deepEqual(updateMessageFlagState({seen:true,flagged:true},'unseen'),{seen:false,flagged:true});
+assert.deepEqual(updateMessageFlagState({seen:false,flagged:true},'unflagged'),{seen:false,flagged:false});
 const webmailUi=fs.readFileSync(path.join(__dirname,'../apps/portal/app/webmail/webmail-client.tsx'),'utf8');
+assert.doesNotMatch(webmailUi,/flagged: flag === 'flagged'/,'updating read state does not clear the star in local UI');
 assert.doesNotMatch(webmailUi,/window\.prompt\(/,'link insertion uses the in-app Vietnamese dialog');
 assert.match(webmailUi,/role="dialog" aria-modal="true" aria-labelledby="wm-link-dialog-title"/,'link dialog is labelled and modal');
 assert.match(webmailUi,/event.key === 'Escape'/,'Escape closes the link dialog');
