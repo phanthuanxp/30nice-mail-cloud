@@ -9,14 +9,14 @@ import {FilesInterceptor} from '@nestjs/platform-express';
 @Controller()
 class ApiController {
   constructor(private readonly service: MailCloudService, private readonly mailcow: MailcowService, private readonly auth: AuthService) {}
-  private async requireWriteAccess(authorization?:string){const session=await this.auth.verifyActive(authorization);if(session.role==='mailbox_user') throw new ForbiddenException('Tài khoản hộp thư không có quyền quản trị');return session;}
-  private async requireReadAccess(authorization?:string){return this.auth.verifyActive(authorization);}
+  private async requireWriteAccess(authorization?:string){return this.auth.requireControlPlane(authorization);}
+  private async requireReadAccess(authorization?:string){return this.auth.requireControlPlane(authorization);}
   private assertSessionTenant(session:{role:string;tenantId?:string},tenantId:string){if(session.role!=='super_admin'&&session.tenantId!==tenantId) throw new ForbiddenException('Không được truy cập dữ liệu tenant khác');}
   @Post('api/v1/auth/login') login(@Body() body:{email?:unknown;password?:unknown},@Req() req:{ip?:string;headers:Record<string,string|undefined>}){return this.auth.login(body?.email,body?.password,req.headers['x-real-ip']||req.ip||'unknown');}
   @Post('api/v1/auth/mfa/setup') beginMfaSetup(@Body() body:{setupToken?:string}){return this.auth.beginMfaSetup(body?.setupToken);}
   @Post('api/v1/auth/mfa/enable') completeMfaSetup(@Body() body:{setupToken?:string;code?:string}){return this.auth.completeMfaSetup(body?.setupToken,body?.code);}
   @Post('api/v1/auth/mfa/verify') verifyMfa(@Body() body:{challengeToken?:string;code?:string}){return this.auth.verifyMfa(body?.challengeToken,body?.code);}
-  @Get('api/v1/auth/mfa/status') async mfaStatus(@Headers('authorization') authorization?:string){await this.auth.verifyActive(authorization);return this.auth.mfaStatus(authorization);}
+  @Get('api/v1/auth/mfa/status') async mfaStatus(@Headers('authorization') authorization?:string){await this.auth.requireControlPlane(authorization);return this.auth.mfaStatus(authorization);}
 
   @Get('health') async health(){const mailcow=await this.mailcow.health();return {status:'ok',environment:mailcow.mode==='production'?'production-integrated':'production-safe',mailAdapter:mailcow.mode,productionReady:mailcow.mode==='production'&&mailcow.healthy,database:await this.service.databaseStatus(),mailcow};}
   @Get('api/v1/info') info(){return {project:'30NICE Mail Cloud',version:'0.4.0',features:['tenant-scoped-crud','postgres-persistence','domain-verification','mailbox-provisioning-jobs','audit-log','quota-validation','mailcow-server-side-adapter','dns-health','tenant-member-auth']};}
