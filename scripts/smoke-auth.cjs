@@ -165,6 +165,9 @@ async function main() {
 
   const tenant = await enroll(auth, 'member@example.com', 'tenant-user-password', '127.0.0.2');
   assert.equal(auth.verify(`Bearer ${tenant.accessToken}`).role, 'tenant_admin');
+  assert.equal((await auth.requireControlPlane(`Bearer ${tenant.accessToken}`)).role, 'tenant_admin', 'tenant admins retain scoped control-plane access');
+  const mailboxUser = auth.issue({ sub: 'mailbox@example.com', role: 'mailbox_user', tenantId: 'tenant-uuid' });
+  await expectReject(auth.requireControlPlane(`Bearer ${mailboxUser.accessToken}`), ForbiddenException);
   const nearbyTenantCodes = [totp(tenant.secret, Date.now() - 30_000), totp(tenant.secret), totp(tenant.secret, Date.now() + 30_000)];
   let wrongTenantCode = '000000';
   while (nearbyTenantCodes.includes(wrongTenantCode)) wrongTenantCode = String(Number(wrongTenantCode) + 1).padStart(6, '0');
