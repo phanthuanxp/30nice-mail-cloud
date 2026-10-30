@@ -5,7 +5,7 @@ const {WebmailService}=require('../apps/api/dist/webmail.service.js');
 const fs=require('node:fs');
 const path=require('node:path');
 const webmailUi=fs.readFileSync(path.join(__dirname,'../apps/portal/app/webmail/webmail-client.tsx'),'utf8');
-assert.doesNotMatch(webmailUi,/window\\.prompt\\(/,'link insertion uses the in-app Vietnamese dialog');
+assert.doesNotMatch(webmailUi,/window\.prompt\(/,'link insertion uses the in-app Vietnamese dialog');
 assert.match(webmailUi,/role="dialog" aria-modal="true" aria-labelledby="wm-link-dialog-title"/,'link dialog is labelled and modal');
 assert.match(webmailUi,/event.key === 'Escape'/,'Escape closes the link dialog');
 assert.match(webmailUi,/event.shiftKey && document.activeElement === first/,'keyboard focus wraps inside the dialog');
