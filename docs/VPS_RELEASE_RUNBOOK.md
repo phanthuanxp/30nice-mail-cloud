@@ -22,7 +22,7 @@ After a reviewed PR is merged and its verification passes:
 1. Open **Actions → Deploy Mail Cloud to VPS → Run workflow**.
 2. Select branch `main` and the explicit `DEPLOY_TO_PRODUCTION` confirmation.
 3. Approve the `production` environment review.
-4. Confirm the run ends successfully. The workflow checks the exact `main` SHA, typechecks and runs the repository smoke tests/build, verifies the pinned SSH host key, deploys over SSH, then checks API health on the VPS and through `https://admin.30nice.vn/api/health`.
+4. Confirm the run ends successfully. The workflow checks the exact `main` SHA, installs the locked dependencies, runs `npm audit --omit=dev`, typechecks and runs the repository smoke tests/build, verifies the pinned SSH host key, deploys over SSH, then checks API health on the VPS and through `https://admin.30nice.vn/api/health`.
 
 The remote script refuses a dirty checkout, missing `.env.prod`, a stale commit, or a non-fast-forward update. It keeps the previous Git revision and attempts to restore/rebuild/reload it if the new build or local health checks fail. A successful workflow is evidence for the app health checks only; it does not prove mail deliverability, mailbox provisioning, or inbox placement.
 
