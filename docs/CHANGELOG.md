@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-30 — Outbound abuse controls
+
+- Limit webmail sending by recipient count per mailbox: defaults to 60 recipients per minute and 300 per hour; configure with `WEBMAIL_SEND_RECIPIENTS_PER_MINUTE` and `WEBMAIL_SEND_RECIPIENTS_PER_HOUR`.
+- Persist counters in PostgreSQL with row-level transactional updates so separate API processes share the same limits; local development without PostgreSQL uses an in-memory fallback.
+- Expire inactive counter rows after seven days and reject over-limit sends with a clear Vietnamese 429 response before SMTP is called.
+
 ## 2026-10-28 — Framework security and webmail runtime
 
 - Upgrade NestJS to 12.3.2, Next.js to 16.4.3 and TypeScript to 6.0.3; move the mail-host rewrite from the deprecated middleware entry point to Next.js `proxy.ts`.
