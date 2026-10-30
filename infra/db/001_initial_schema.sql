@@ -74,3 +74,12 @@ CREATE TABLE IF NOT EXISTS provisioning_jobs (
 CREATE INDEX IF NOT EXISTS idx_domains_tenant ON domains(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_mailboxes_tenant ON mailboxes(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_created ON audit_logs(tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS webmail_send_limits (
+  mailbox_email TEXT PRIMARY KEY,
+  minute_window_start TIMESTAMPTZ NOT NULL,
+  minute_count INTEGER NOT NULL DEFAULT 0,
+  hour_window_start TIMESTAMPTZ NOT NULL,
+  hour_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

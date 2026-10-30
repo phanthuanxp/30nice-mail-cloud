@@ -4,6 +4,7 @@ import nodemailer from 'nodemailer';
 import { simpleParser } from 'mailparser';
 import sanitizeHtml = require('sanitize-html');
 import { randomBytes } from 'node:crypto';
+import { DatabaseService } from './database.service';
 
 type WebmailSession = { email: string; password: string; expiresAt: number };
 type MailAddress = { address?: string; name?: string };
@@ -11,12 +12,79 @@ type DraftInput = { draftId?: string; replaceUid?: number; to?: string; cc?: str
 
 @Injectable()
 export class WebmailService {
+  constructor(private readonly database?: DatabaseService) {}
   private readonly sessions = new Map<string, WebmailSession>();
   private readonly attempts = new Map<string, { count: number; resetAt: number }>();
+  private readonly sendCounters = new Map<string, { minuteWindow: number; minuteCount: number; hourWindow: number; hourCount: number }>();
   private readonly maxSessions = 10_000;
   private readonly maxAttemptBuckets = 50_000;
+  private sendLimitTableReady?: Promise<boolean>;
+  private nextSendLimitCleanupAt = 0;
   private readonly host = process.env.MAILCOW_IMAP_HOST || 'mx.30nice.vn';
   private readonly smtpHost = process.env.MAILCOW_SMTP_HOST || this.host;
+
+  private configuredSendLimit(name: string, fallback: number) {
+    const value = Number(process.env[name]);
+    return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+  }
+
+  private async ensureSendLimitTable() {
+    if (!this.database) return false;
+    this.sendLimitTableReady ??= this.database.query(`
+      CREATE TABLE IF NOT EXISTS webmail_send_limits (
+        mailbox_email TEXT PRIMARY KEY,
+        minute_window_start TIMESTAMPTZ NOT NULL,
+        minute_count INTEGER NOT NULL DEFAULT 0,
+        hour_window_start TIMESTAMPTZ NOT NULL,
+        hour_count INTEGER NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `).then(result => result !== null);
+    try { return await this.sendLimitTableReady; }
+    catch (error) { this.sendLimitTableReady = undefined; throw error; }
+  }
+
+  private async consumeSendAllowance(email: string, recipientCount: number) {
+    const now = Date.now();
+    const minuteWindow = Math.floor(now / 60_000) * 60_000;
+    const hourWindow = Math.floor(now / 3_600_000) * 3_600_000;
+    const minuteLimit = this.configuredSendLimit('WEBMAIL_SEND_RECIPIENTS_PER_MINUTE', 60);
+    const hourLimit = this.configuredSendLimit('WEBMAIL_SEND_RECIPIENTS_PER_HOUR', 300);
+    const minuteBucket = new Date(minuteWindow);
+    const hourBucket = new Date(hourWindow);
+
+    if (await this.ensureSendLimitTable()) {
+      if (now >= this.nextSendLimitCleanupAt) {
+        this.nextSendLimitCleanupAt = now + 60 * 60_000;
+        await this.database!.query(`DELETE FROM webmail_send_limits WHERE updated_at < now() - interval '7 days'`);
+      }
+      await this.database!.transaction(async query => {
+        await query(`INSERT INTO webmail_send_limits (mailbox_email, minute_window_start, minute_count, hour_window_start, hour_count)
+          VALUES ($1, $2, 0, $3, 0) ON CONFLICT (mailbox_email) DO NOTHING`, [email, minuteBucket, hourBucket]);
+        const [row] = await query<{ minute_window_start: Date; minute_count: number; hour_window_start: Date; hour_count: number }>(
+          `SELECT minute_window_start, minute_count, hour_window_start, hour_count FROM webmail_send_limits WHERE mailbox_email=$1 FOR UPDATE`, [email]);
+        if (!row) throw new HttpException('Không thể kiểm tra hạn mức gửi thư. Vui lòng thử lại.', HttpStatus.SERVICE_UNAVAILABLE);
+        const minuteCount = new Date(row.minute_window_start).getTime() === minuteWindow ? Number(row.minute_count) : 0;
+        const hourCount = new Date(row.hour_window_start).getTime() === hourWindow ? Number(row.hour_count) : 0;
+        if (minuteCount + recipientCount > minuteLimit) throw new HttpException('Hộp thư đã đạt giới hạn người nhận trong phút này. Vui lòng thử lại sau.', HttpStatus.TOO_MANY_REQUESTS);
+        if (hourCount + recipientCount > hourLimit) throw new HttpException('Hộp thư đã đạt giới hạn người nhận trong giờ này. Vui lòng thử lại sau.', HttpStatus.TOO_MANY_REQUESTS);
+        await query(`UPDATE webmail_send_limits SET minute_window_start=$2, minute_count=$3, hour_window_start=$4, hour_count=$5, updated_at=now() WHERE mailbox_email=$1`,
+          [email, minuteBucket, minuteCount + recipientCount, hourBucket, hourCount + recipientCount]);
+        return [{ allowed: true }];
+      });
+      return;
+    }
+
+    for (const [key, counter] of this.sendCounters) {
+      if (counter.hourWindow + 3_600_000 <= now) this.sendCounters.delete(key);
+    }
+    const current = this.sendCounters.get(email);
+    const minuteCount = current?.minuteWindow === minuteWindow ? current.minuteCount : 0;
+    const hourCount = current?.hourWindow === hourWindow ? current.hourCount : 0;
+    if (minuteCount + recipientCount > minuteLimit) throw new HttpException('Hộp thư đã đạt giới hạn người nhận trong phút này. Vui lòng thử lại sau.', HttpStatus.TOO_MANY_REQUESTS);
+    if (hourCount + recipientCount > hourLimit) throw new HttpException('Hộp thư đã đạt giới hạn người nhận trong giờ này. Vui lòng thử lại sau.', HttpStatus.TOO_MANY_REQUESTS);
+    this.sendCounters.set(email, { minuteWindow, minuteCount: minuteCount + recipientCount, hourWindow, hourCount: hourCount + recipientCount });
+  }
 
   private makeClient(email: string, password: string) {
     const client = new ImapFlow({ host: this.host, port: 993, secure: true, auth: { user: email, pass: password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000, logger: false, clientInfo: { name: '30NICE Mail', version: '1.0' } });
@@ -400,6 +468,7 @@ export class WebmailService {
     if (!text.trim() && !html.replace(/<[^>]*>/g, '').trim() && !subject) throw new BadRequestException('Email cần có tiêu đề hoặc nội dung');
     if (text.length > 50_000) throw new BadRequestException('Nội dung thư vượt quá giới hạn 50 KB');
     if (html.length > 100_000) throw new BadRequestException('Định dạng thư vượt quá giới hạn cho phép');
+    await this.consumeSendAllowance(session.email, recipients.length);
     const port = Number(process.env.MAILCOW_SMTP_PORT || 465);
     const messageOptions = { from: session.email, to, cc: cc.length ? cc : undefined, bcc: bcc.length ? bcc : undefined, subject, text, html: html || undefined, attachments: files.map(file => ({ filename: file.filename.replace(/[\r\n"\\/]/g, '_').slice(0, 180), content: file.buffer, contentType: file.contentType })), headers: { 'X-30NICE-Webmail': '1' } };
     const addresses = (values: readonly unknown[]) => values.map(value => String(value)).filter(Boolean);
