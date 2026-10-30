@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-30 — Control plane MFA
+
+- Require TOTP enrollment after password login for each control-plane identity; issue administrator/tenant access tokens only after confirming a valid authenticator code.
+- Encrypt TOTP secrets at rest with AES-256-GCM using a key derived from the server-only session secret; prevent TOTP replay and issue one-time, high-entropy recovery codes.
+- Permit recovery-code login once per code; rate-limit and expire MFA setup/challenge sessions.
+
 ## 2026-10-30 — Outbound abuse controls
 
 - Limit webmail sending by recipient count per mailbox: defaults to 60 recipients per minute and 300 per hour; configure with `WEBMAIL_SEND_RECIPIENTS_PER_MINUTE` and `WEBMAIL_SEND_RECIPIENTS_PER_HOUR`.
