@@ -10,7 +10,7 @@ GitHub Actions **Verify Mail Cloud** passed on main commit `8e499ef303c9a95ecae6
 - Webmail content, BCC, contacts, search, send limits, cross-instance login limits and Trash deletion smoke tests.
 - Next.js portal production build and Bash syntax check for the guarded VPS release script.
 
-The same `package-lock.json` passed `npm audit --omit=dev` in PR #26 on 2026-10-30. This covers runtime dependencies only; a full audit including development/build dependencies has not been verified in this run. PR #26 adds the audit to regular CI and the manual production release gate.
+Main CI and the manual production release workflow now both run `npm audit --omit=dev`. It passed on main commit `a549fb8d5adc3b1f249bed3bb71e682122f86740` on 2026-10-30. This covers runtime dependencies only; a full audit including development/build dependencies has not been verified.
 
 ## Production and deployment status
 
