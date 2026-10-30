@@ -68,6 +68,8 @@ async function main() {
   await secondProcess.consumeSendAllowance('persisted@example.test', 1);
   assert.equal(database.rows.get('persisted@example.test').hour_count, 5, 'failed requests do not consume the rate quota');
 
+  process.env.WEBMAIL_SEND_RECIPIENTS_PER_MINUTE = '60';
+  process.env.WEBMAIL_SEND_RECIPIENTS_PER_HOUR = '300';
   const boundary = new FakeDatabase();
   const justBeforeBoundary = new Date('2026-10-30T08:10:59.900Z');
   const justAfterBoundary = new Date('2026-10-30T08:11:00.100Z');
