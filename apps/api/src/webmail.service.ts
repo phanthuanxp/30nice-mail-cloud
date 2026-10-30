@@ -164,7 +164,10 @@ export class WebmailService {
   }
 
   private async clearLoginAttempts(keys: Array<{ key: string; limit: number }>) {
-    if (await this.ensureLoginLimitTable()) {
+    let persistent = false;
+    try { persistent = await this.ensureLoginLimitTable(); }
+    catch { throw new HttpException('Không thể hoàn tất đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE); }
+    if (persistent) {
       try { await this.database!.query('DELETE FROM webmail_login_limits WHERE limit_key = ANY($1::text[])', [keys.map(item => item.key)]); }
       catch { throw new HttpException('Không thể hoàn tất đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE); }
       return;
@@ -181,7 +184,7 @@ export class WebmailService {
   async login(emailInput: string, password: string, sourceIp: string) {
     const email = typeof emailInput === 'string' ? emailInput.trim().toLowerCase() : '';
     const secret = typeof password === 'string' ? password : '';
-    if (email.length > 254 || !/^\\S+@\\S+\\.\\S+$/.test(email) || !secret || secret.length > 256) throw new BadRequestException('Vui lòng nhập email và mật khẩu hợp lệ');
+    if (email.length > 254 || !/^\S+@\S+\.\S+$/.test(email) || !secret || secret.length > 256) throw new BadRequestException('Vui lòng nhập email và mật khẩu hợp lệ');
     const clientIp = (typeof sourceIp === 'string' && sourceIp ? sourceIp : 'unknown').slice(0, 64);
     const keys = [
       { key: `webmail:${createHash('sha256').update(`pair:${clientIp}:${email}`).digest('hex')}`, limit: 8 },
