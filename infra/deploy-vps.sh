@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 APP_DIR=/opt/30nice-mail-cloud
 NODE=/opt/30nice-mail-cloud-runtime/node-v22.23.4-linux-x64/bin/node
+export PATH="$(dirname "$NODE"):$PATH"
 EXPECTED_SHA=${DEPLOY_COMMIT_SHA:-}
 HEALTH_FILE=$(mktemp)
 UPDATED=0
