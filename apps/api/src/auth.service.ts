@@ -343,6 +343,11 @@ export class AuthService {
   }
 
   requireSuperAdmin(header?: string) { const session = this.verify(header); if (session.role !== 'super_admin') throw new ForbiddenException('Chỉ Super Admin được thực hiện thao tác này'); return session; }
+  async requireControlPlane(header?: string) {
+    const session = await this.verifyActive(header);
+    if (session.role === 'mailbox_user') throw new ForbiddenException('Tài khoản hộp thư chỉ được truy cập Webmail');
+    return session;
+  }
   async verifyActive(header?: string) {
     const session = this.verify(header);
     if (!Number.isFinite(session.mfaAt)) throw new UnauthorizedException('Phiên đăng nhập cũ chưa xác thực hai bước. Vui lòng đăng nhập lại để hoàn tất MFA.');
