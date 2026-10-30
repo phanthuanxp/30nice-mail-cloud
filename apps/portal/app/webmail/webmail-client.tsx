@@ -71,6 +71,7 @@ export default function WebmailClient() {
   const [selected, setSelected] = useState<Message | null>(null);
   const [query, setQuery] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const [showSearchOperators, setShowSearchOperators] = useState(false);
   const [listFilter, setListFilter] = useState<'all' | 'unread' | 'starred'>('all');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -87,6 +88,7 @@ export default function WebmailClient() {
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
   const [densityReady, setDensityReady] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const draftQueue = useRef<Promise<void>>(Promise.resolve());
   const sendingRef = useRef(false);
   const draftSaveVersion = useRef(0);
@@ -471,6 +473,12 @@ export default function WebmailClient() {
 
   function newCompose(): Compose { return { draftId: crypto.randomUUID(), to: '', cc: '', bcc: '', subject: '', text: '', html: '', files: [] }; }
 
+  function insertSearchOperator(operator: string) {
+    setSearchInput(value => `${value.trim()}${value.trim() ? ' ' : ''}${operator}`);
+    setShowSearchOperators(false);
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  }
+
   function recipientSuggestions(field: 'to' | 'cc' | 'bcc') {
     if (!compose || activeRecipient !== field) return [];
     const current = (compose[field].split(',').pop() || '').trim().toLocaleLowerCase();
@@ -499,7 +507,7 @@ export default function WebmailClient() {
     <header className="wm-topbar">
       <button className="wm-icon-btn wm-mobile-menu" aria-label="Mở điều hướng" onClick={() => setMobileNav(!mobileNav)}><Menu size={21} /></button>
       <div className="wm-logo"><div className="wm-brand-mark"><Mail size={22} /></div><span>30NICE <b>Mail</b></span></div>
-      <form className="wm-search" onSubmit={event => { event.preventDefault(); setPage(1); setQuery(searchInput); void loadMessages(folder, searchInput, 1); }}><Search size={20} /><input aria-label="Tìm kiếm thư" placeholder="Tìm thư (from:, subject:, after:…)" title="Tìm tự do hoặc dùng from:, to:, cc:, subject:, after:YYYY/MM/DD, before:YYYY/MM/DD, is:unread, is:read, is:starred" value={searchInput} onChange={event => setSearchInput(event.target.value)} /><button aria-label="Tìm kiếm"><Search size={17} /></button></form>
+      <form className="wm-search" onSubmit={event => { event.preventDefault(); setShowSearchOperators(false); const unchanged=searchInput===query&&page===1; setPage(1); setQuery(searchInput); if(unchanged) void loadMessages(folder, searchInput, 1); }} onKeyDown={event => { if (event.key === 'Escape') setShowSearchOperators(false); }}><Search size={20} /><input ref={searchInputRef} aria-label="Tìm kiếm thư" placeholder="Tìm thư (from:, subject:, after:…)" title="Tìm tự do hoặc dùng from:, to:, cc:, subject:, after:YYYY/MM/DD, before:YYYY/MM/DD, is:unread, is:read, is:starred" value={searchInput} onChange={event => setSearchInput(event.target.value)} /><button type="button" className="wm-search-operators" aria-label="Mở bộ lọc tìm kiếm" title="Bộ lọc tìm kiếm" aria-expanded={showSearchOperators} onClick={() => setShowSearchOperators(open => !open)}><CircleHelp size={18} /></button><button type="submit" aria-label="Tìm kiếm"><Search size={17} /></button>{showSearchOperators && <div className="wm-search-operator-panel" role="dialog" aria-label="Bộ lọc tìm kiếm"><b>Tìm thư theo điều kiện</b><p>Chọn điều kiện để thêm vào ô tìm kiếm, sau đó nhập giá trị.</p><div>{[['Người gửi','from:'],['Người nhận','to:'],['CC','cc:'],['Chủ đề','subject:'],['Sau ngày','after:'],['Trước ngày','before:'],['Chưa đọc','is:unread'],['Đã đọc','is:read'],['Có gắn sao','is:starred']].map(([label,operator]) => <button type="button" key={operator} onClick={() => insertSearchOperator(operator)}><span>{label}</span><code>{operator}</code></button>)}</div><small>Ví dụ: <code>from:an@congty.vn is:unread</code></small></div>}</form>
       <div className="wm-top-actions"><button className="wm-icon-btn wm-help" aria-label="Trợ giúp" title="Trợ giúp" onClick={() => setActivePanel('help')}><CircleHelp size={19} /></button><div className="wm-user-chip"><span className="wm-avatar wm-avatar-small">{initials(account)}</span><span className="wm-user-email">{account}</span><ChevronDown size={15} /></div><button className="wm-icon-btn wm-logout" aria-label="Đăng xuất" title="Đăng xuất" onClick={() => void signOut()}><LogOut size={18} /></button></div>
     </header>
     <div className="wm-layout">
