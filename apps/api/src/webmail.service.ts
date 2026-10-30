@@ -3,7 +3,7 @@ import { ImapFlow } from 'imapflow';
 import nodemailer from 'nodemailer';
 import { simpleParser } from 'mailparser';
 import sanitizeHtml = require('sanitize-html');
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { DatabaseService } from './database.service';
 
 type WebmailSession = { email: string; password: string; expiresAt: number };
@@ -19,7 +19,9 @@ export class WebmailService {
   private readonly maxSessions = 10_000;
   private readonly maxAttemptBuckets = 50_000;
   private sendLimitTableReady?: Promise<boolean>;
+  private loginLimitTableReady?: Promise<boolean>;
   private nextSendLimitCleanupAt = 0;
+  private nextLoginLimitCleanupAt = 0;
   private readonly host = process.env.MAILCOW_IMAP_HOST || 'mx.30nice.vn';
   private readonly smtpHost = process.env.MAILCOW_SMTP_HOST || this.host;
 
@@ -91,6 +93,88 @@ export class WebmailService {
     this.sendCounters.set(email, { minuteWindow, minuteCount: minuteCount + recipientCount, hourWindow, hourCount: hourCount + recipientCount });
   }
 
+  private async ensureLoginLimitTable() {
+    if (!this.database) return false;
+    this.loginLimitTableReady ??= this.database.query(`
+      CREATE TABLE IF NOT EXISTS webmail_login_limits (
+        limit_key TEXT PRIMARY KEY,
+        failure_count INTEGER NOT NULL DEFAULT 0,
+        reset_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS webmail_login_limits_reset_at_idx ON webmail_login_limits(reset_at)
+    `).then(result => result !== null);
+    try { return await this.loginLimitTableReady; }
+    catch (error) { this.loginLimitTableReady = undefined; throw error; }
+  }
+
+  private async reserveLoginAttempts(keys: Array<{ key: string; limit: number }>) {
+    let persistent = false;
+    try { persistent = await this.ensureLoginLimitTable(); }
+    catch { throw new HttpException('Không thể kiểm tra giới hạn đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE); }
+
+    if (persistent) {
+      if (Date.now() >= this.nextLoginLimitCleanupAt) {
+        this.nextLoginLimitCleanupAt = Date.now() + 10 * 60_000;
+        try { await this.database!.query("DELETE FROM webmail_login_limits WHERE reset_at < now() - interval '1 day'"); }
+        catch { throw new HttpException('Không thể kiểm tra giới hạn đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE); }
+      }
+      try {
+        const result = await this.database!.transaction(async query => {
+          for (const item of [...keys].sort((a, b) => a.key.localeCompare(b.key))) {
+            await query("INSERT INTO webmail_login_limits(limit_key,failure_count,reset_at) VALUES ($1,0,clock_timestamp()+interval '15 minutes') ON CONFLICT (limit_key) DO NOTHING", [item.key]);
+            const [row] = await query<{ failure_count: number; reset_at: Date; locked_now: Date }>(
+              'SELECT failure_count,reset_at,clock_timestamp() AS locked_now FROM webmail_login_limits WHERE limit_key=$1 FOR UPDATE', [item.key]);
+            if (!row) throw new HttpException('Không thể kiểm tra giới hạn đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE);
+            if (new Date(row.reset_at).getTime() <= new Date(row.locked_now).getTime()) {
+              await query("UPDATE webmail_login_limits SET failure_count=1,reset_at=clock_timestamp()+interval '15 minutes',updated_at=clock_timestamp() WHERE limit_key=$1", [item.key]);
+            } else {
+              if (Number(row.failure_count) >= item.limit) throw new HttpException('Đăng nhập tạm khóa. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
+              await query('UPDATE webmail_login_limits SET failure_count=failure_count+1,updated_at=clock_timestamp() WHERE limit_key=$1', [item.key]);
+            }
+          }
+          return [{ reserved: true }];
+        });
+        if (!result) throw new Error('Database transaction is unavailable');
+        return;
+      } catch (error) {
+        if (error instanceof HttpException) throw error;
+        throw new HttpException('Không thể kiểm tra giới hạn đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE);
+      }
+    }
+
+    const now = Date.now();
+    for (const [key, value] of this.attempts) if (value.resetAt <= now) this.attempts.delete(key);
+    if (this.attempts.size + keys.length > this.maxAttemptBuckets) {
+      while (this.attempts.size + keys.length > this.maxAttemptBuckets) {
+        const oldest = this.attempts.keys().next().value;
+        if (oldest === undefined) break;
+        this.attempts.delete(oldest);
+      }
+    }
+    if (keys.some(item => (this.attempts.get(item.key)?.count || 0) >= item.limit)) {
+      throw new HttpException('Đăng nhập tạm khóa. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    for (const item of keys) {
+      const current = this.attempts.get(item.key);
+      const bucket = !current || current.resetAt <= now ? { count: 0, resetAt: now + 15 * 60_000 } : current;
+      bucket.count++;
+      this.attempts.set(item.key, bucket);
+    }
+  }
+
+  private async clearLoginAttempts(keys: Array<{ key: string; limit: number }>) {
+    let persistent = false;
+    try { persistent = await this.ensureLoginLimitTable(); }
+    catch { throw new HttpException('Không thể hoàn tất đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE); }
+    if (persistent) {
+      try { await this.database!.query('DELETE FROM webmail_login_limits WHERE limit_key = ANY($1::text[])', [keys.map(item => item.key)]); }
+      catch { throw new HttpException('Không thể hoàn tất đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE); }
+      return;
+    }
+    for (const item of keys) this.attempts.delete(item.key);
+  }
+
   private makeClient(email: string, password: string) {
     const client = new ImapFlow({ host: this.host, port: 993, secure: true, auth: { user: email, pass: password }, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 20_000, logger: false, clientInfo: { name: '30NICE Mail', version: '1.0' } });
     client.on('error', () => undefined);
@@ -98,42 +182,28 @@ export class WebmailService {
   }
 
   async login(emailInput: string, password: string, sourceIp: string) {
-    const email = emailInput.trim().toLowerCase();
-    if (email.length > 254 || !/^\S+@\S+\.\S+$/.test(email) || !password || password.length > 256) throw new BadRequestException('Vui lòng nhập email và mật khẩu hợp lệ');
-    const clientIp = (sourceIp || 'unknown').slice(0, 64);
+    const email = typeof emailInput === 'string' ? emailInput.trim().toLowerCase() : '';
+    const secret = typeof password === 'string' ? password : '';
+    if (email.length > 254 || !/^\S+@\S+\.\S+$/.test(email) || !secret || secret.length > 256) throw new BadRequestException('Vui lòng nhập email và mật khẩu hợp lệ');
+    const clientIp = (typeof sourceIp === 'string' && sourceIp ? sourceIp : 'unknown').slice(0, 64);
     const keys = [
-      { key: `pair:${clientIp}:${email}`, limit: 8 },
-      { key: `ip:${clientIp}`, limit: 40 },
-      { key: `account:${email}`, limit: 12 },
+      { key: `webmail:${createHash('sha256').update(`pair:${clientIp}:${email}`).digest('hex')}`, limit: 8 },
+      { key: `webmail:${createHash('sha256').update(`ip:${clientIp}`).digest('hex')}`, limit: 40 },
+      { key: `webmail:${createHash('sha256').update(`account:${email}`).digest('hex')}`, limit: 12 },
     ];
     const now = Date.now();
     for (const [token, session] of this.sessions) if (session.expiresAt <= now) this.sessions.delete(token);
-    for (const [attemptKey, value] of this.attempts) if (value.resetAt <= now) this.attempts.delete(attemptKey);
-    if (keys.some(({ key, limit }) => (this.attempts.get(key)?.count || 0) >= limit)) throw new HttpException('Đăng nhập tạm khóa. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
+    await this.reserveLoginAttempts(keys);
     try {
-      const client = this.makeClient(email, password);
+      const client = this.makeClient(email, secret);
       try { await client.connect(); } finally { await client.logout().catch(() => undefined); }
     } catch {
-      if (this.attempts.size + keys.length > this.maxAttemptBuckets) {
-        for (const [attemptKey, value] of this.attempts) if (value.resetAt <= now) this.attempts.delete(attemptKey);
-        while (this.attempts.size + keys.length > this.maxAttemptBuckets) {
-          const oldest = this.attempts.keys().next().value;
-          if (oldest === undefined) break;
-          this.attempts.delete(oldest);
-        }
-      }
-      for (const { key } of keys) {
-        const attempt = this.attempts.get(key);
-        const bucket = !attempt || attempt.resetAt <= now ? { count: 0, resetAt: now + 15 * 60_000 } : attempt;
-        bucket.count++;
-        this.attempts.set(key, bucket);
-      }
       throw new UnauthorizedException('Email hoặc mật khẩu chưa chính xác');
     }
-    for (const { key } of keys) this.attempts.delete(key);
+    await this.clearLoginAttempts(keys);
     if (this.sessions.size >= this.maxSessions) throw new HttpException('Hệ thống đang có quá nhiều phiên đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE);
     const token = randomBytes(32).toString('base64url');
-    this.sessions.set(token, { email, password, expiresAt: now + 8 * 60 * 60_000 });
+    this.sessions.set(token, { email, password: secret, expiresAt: now + 8 * 60 * 60_000 });
     return { token, email, expiresAt: now + 8 * 60 * 60_000 };
   }
 
