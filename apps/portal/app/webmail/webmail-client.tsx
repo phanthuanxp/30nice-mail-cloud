@@ -48,6 +48,9 @@ function folderLabel(folder: Folder) {
   const labels: Record<string, string> = { '\\Inbox': 'Hộp thư đến', '\\Sent': 'Đã gửi', '\\Drafts': 'Thư nháp', '\\Trash': 'Thùng rác', '\\Junk': 'Thư rác', '\\Archive': 'Lưu trữ', '\\Flagged': 'Có gắn sao' };
   return labels[folder.specialUse || ''] || (folder.path.toUpperCase() === 'INBOX' ? 'Hộp thư đến' : folder.name);
 }
+function isTrashFolder(folder?: Folder) {
+  return Boolean(folder && (folder.specialUse === '\\Trash' || /^(trash|deleted items|thư đã xóa|thùng rác)$/i.test(folder.name.trim()) || /^(trash|deleted items|thùng rác)$/i.test(folder.path.trim())));
+}
 function person(address?: Address) { return address?.name || address?.address || 'Không rõ người gửi'; }
 function initials(name: string) { return name.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(bit => bit[0]).join('').toUpperCase() || 'M'; }
 function shortDate(value: string | null) { if (!value) return ''; const date = new Date(value); return date.toLocaleDateString('vi-VN') === new Date().toLocaleDateString('vi-VN') ? date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }); }
@@ -170,7 +173,7 @@ export default function WebmailClient() {
   const selectedAllFlagged = selectedItems.length > 0 && selectedItems.every(item => item.flagged);
   const currentFolder = folders.find(item => item.path === folder);
   const selectedFolder = selected ? folders.find(item => item.path === selected.folder) : undefined;
-  const inTrash = selected ? selectedFolder?.specialUse === '\\Trash' : !query && currentFolder?.specialUse === '\\Trash';
+  const inTrash = selected ? isTrashFolder(selectedFolder) : !query && isTrashFolder(currentFolder);
   const inArchive = selected ? selectedFolder?.specialUse === '\\Archive' : !query && currentFolder?.specialUse === '\\Archive';
 
   async function signIn(event: FormEvent) {
