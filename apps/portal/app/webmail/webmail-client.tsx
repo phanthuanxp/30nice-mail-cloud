@@ -191,7 +191,12 @@ export default function WebmailClient() {
     void request('/contacts').then((data: Contact[]) => { if (active) setContacts(Array.isArray(data) ? data : []); }).catch(() => { if (active) setContacts([]); });
     return () => { active = false; };
   }, [authenticated, request]);
-  useEffect(() => { const timer = window.setTimeout(() => { setPage(1); setQuery(searchInput); }, 350); return () => window.clearTimeout(timer); }, [searchInput]);
+  useEffect(() => {
+    const incompleteOperator = /(?:^|\s)(?:from|to|cc|subject|after|before):$/i.test(searchInput.trim());
+    if (incompleteOperator) return;
+    const timer = window.setTimeout(() => { setPage(1); setQuery(searchInput); }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
 
   const unreadCount = useMemo(() => folders.reduce((sum, item) => sum + item.unread, 0), [folders]);
   const visibleItems = items;
