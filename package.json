@@ -19,6 +19,7 @@
     "test:webmail-contacts": "npm run build:api && node scripts/smoke-webmail-contacts.cjs",
     "test:webmail-search": "npm run build:api && node scripts/smoke-webmail-search.cjs",
     "test:webmail-send-rate": "npm run build:api && node scripts/smoke-webmail-send-rate.cjs",
+    "test:webmail-trash-delete": "npm run build:api && node scripts/smoke-webmail-trash-delete.cjs",
     "typecheck": "npm run typecheck --workspace=@30nice/portal && npm run typecheck --workspace=@30nice/api",
     "test": "npm run typecheck"
   }

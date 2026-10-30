@@ -452,6 +452,20 @@ export class WebmailService {
     });
   }
 
+  async deletePermanently(token: string | undefined, folder: string, uid: number) {
+    this.assertUid(uid);
+    return this.withClient(token, async client => {
+      const folders = await client.list();
+      const selected = folders.find(item => item.path === folder);
+      if (!selected) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
+      const trash = folders.find(item => item.specialUse === '\\Trash') || folders.find(item => /^(trash|deleted items|thư đã xóa|thùng rác)$/i.test(item.name));
+      if (!trash || selected.path !== trash.path) throw new BadRequestException('Chỉ có thể xóa vĩnh viễn thư đang ở trong Thùng rác');
+      const lock = await client.getMailboxLock(trash.path);
+      try { return await client.messageDelete(uid, { uid: true }); }
+      finally { lock.release(); }
+    });
+  }
+
   async send(token: string | undefined, input: DraftInput, files: Array<{ buffer: Buffer; filename: string; contentType: string }> = []) {
     const session = this.session(token);
     const to = (input.to || '').split(',').map(value => value.trim()).filter(Boolean);
