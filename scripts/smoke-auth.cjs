@@ -26,12 +26,15 @@ const expectReject = async (promise, type) => assert.rejects(promise, error => e
 
 class FakeDatabase {
   credentials = new Map();
+  authFailureLimits = new Map();
   tenantStatus = 'active';
   memberStatus = 'active';
 
   async ensureSeed() {}
   async query(sql, values = []) {
     if (sql.includes('CREATE TABLE IF NOT EXISTS mfa_credentials')) return [];
+    if (sql.includes('SELECT EXISTS (')) return [{ blocked: values[0].some(key => (this.authFailureLimits.get(key)?.count || 0) >= 8) }];
+    if (sql.includes('DELETE FROM auth_failure_limits')) { for (const key of values[0] || []) this.authFailureLimits.delete(key); return []; }
     if (sql.includes('SELECT secret_ciphertext')) return this.credentials.has(values[0]) ? [this.credentials.get(values[0])] : [];
     if (sql.includes('INSERT INTO mfa_credentials')) {
       const [accountKey, email, tenantId, secret, counter, hashes] = values;
@@ -64,6 +67,24 @@ class FakeDatabase {
     if (sql.includes('FROM tenant_members WHERE')) return [{ id: 'member-id' }];
     if (sql.includes('select id::text,status from tenants')) return this.tenantStatus === 'missing' ? [] : [{ id: 'tenant-uuid', status: this.tenantStatus }];
     return [];
+  }
+  async transaction(work) {
+    return work(async (sql, values = []) => {
+      if (sql.includes('INSERT INTO auth_failure_limits')) {
+        if (!this.authFailureLimits.has(values[0])) this.authFailureLimits.set(values[0], { count: 0 });
+        return [];
+      }
+      if (sql.includes('SELECT failure_count FROM auth_failure_limits')) {
+        const row = this.authFailureLimits.get(values[0]);
+        return row ? [{ failure_count: row.count }] : [];
+      }
+      if (sql.includes('UPDATE auth_failure_limits SET')) {
+        const row = this.authFailureLimits.get(values[0]);
+        if (row) row.count++;
+        return [];
+      }
+      return [];
+    });
   }
 }
 
@@ -107,6 +128,16 @@ async function main() {
   const totpChallenge = await auth.login('admin@example.com', 'smoke-admin-password', '127.0.0.1');
   const freshSession = await auth.verifyMfa(totpChallenge.challengeToken, freshTotp);
   assert.equal(auth.verify(`Bearer ${freshSession.accessToken}`).role, 'super_admin');
+
+  const nearbyCodes = [totp(admin.secret, Date.now() - 30_000), totp(admin.secret), totp(admin.secret, Date.now() + 30_000)];
+  let wrongMfaCode = '000000';
+  while (nearbyCodes.includes(wrongMfaCode)) wrongMfaCode = String(Number(wrongMfaCode) + 1).padStart(6, '0');
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const challenge = await auth.login('admin@example.com', 'smoke-admin-password', '192.0.2.77');
+    await expectReject(auth.verifyMfa(challenge.challengeToken, wrongMfaCode), UnauthorizedException);
+  }
+  const throttledMfa = await auth.login('admin@example.com', 'smoke-admin-password', '192.0.2.77');
+  await assert.rejects(auth.verifyMfa(throttledMfa.challengeToken, wrongMfaCode), error => error instanceof HttpException && error.getStatus() === 429);
 
   const legacyBody = Buffer.from(JSON.stringify({ sub: 'admin@example.com', role: 'super_admin', exp: Date.now() + 60_000 })).toString('base64url');
   const legacyToken = `${legacyBody}.${auth.sign(legacyBody)}`;
