@@ -225,7 +225,7 @@ export class AuthService {
   }
 
   private issue(input: Omit<Session, 'exp'>) {
-    const session: Session = { ...input, mfaAt: Date.now(), exp: Date.now() + 8 * 60 * 60 * 1000 };
+    const session: Session = { sub: input.sub, role: input.role, tenantId: input.tenantId, mfaAt: Date.now(), exp: Date.now() + 8 * 60 * 60 * 1000 };
     const body = this.encode(JSON.stringify(session));
     return { accessToken: `${body}.${this.sign(body)}`, expiresAt: session.exp, user: { email: session.sub, role: session.role, tenantId: session.tenantId } };
   }
@@ -316,7 +316,9 @@ export class AuthService {
         const remaining = [...credential.recovery_hashes];
         remaining.splice(index, 1);
         if (await this.ensureMfaSchema()) {
-          const changed = await this.database.query(`UPDATE mfa_credentials SET recovery_hashes=$2::jsonb,updated_at=now() WHERE account_key=$1 AND recovery_hashes @> $3::jsonb RETURNING account_key`, [value.accountKey, JSON.stringify(remaining), JSON.stringify([credential.recovery_hashes[index]])]);
+          const changed = await this.database.query(`UPDATE mfa_credentials SET recovery_hashes=COALESCE((
+            SELECT jsonb_agg(item.code) FROM jsonb_array_elements_text(mfa_credentials.recovery_hashes) AS item(code) WHERE item.code <> $2
+          ), '[]'::jsonb),updated_at=now() WHERE account_key=$1 AND recovery_hashes @> jsonb_build_array($2) RETURNING account_key`, [value.accountKey, credential.recovery_hashes[index]]);
           accepted = Boolean(changed?.length);
         } else { credential.recovery_hashes = remaining; accepted = true; }
       }

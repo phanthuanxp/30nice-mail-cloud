@@ -51,9 +51,9 @@ class FakeDatabase {
     }
     if (sql.includes('SET recovery_hashes=')) {
       const row = this.credentials.get(values[0]);
-      const used = JSON.parse(values[2])[0];
+      const used = values[1];
       if (row && row.recovery_hashes.includes(used)) {
-        row.recovery_hashes = JSON.parse(values[1]);
+        row.recovery_hashes = row.recovery_hashes.filter(item => item !== used);
         return [{ account_key: values[0] }];
       }
       return [];
@@ -113,6 +113,9 @@ async function main() {
 
   const admin = await enroll(auth, 'ADMIN@example.com', 'smoke-admin-password', '127.0.0.1');
   assert.equal(auth.verify(`Bearer ${admin.accessToken}`).role, 'super_admin');
+  const sessionPayload = JSON.parse(Buffer.from(admin.accessToken.split('.')[0], 'base64url').toString('utf8'));
+  assert.equal(sessionPayload.secret, undefined, 'enrollment TOTP secret must never enter the session token');
+  assert.equal(sessionPayload.kind, undefined, 'temporary MFA challenge metadata must never enter the session token');
   const storedAdminMfa = database.credentials.get('admin:admin@example.com');
   assert.ok(storedAdminMfa.secret_ciphertext && !storedAdminMfa.secret_ciphertext.includes(admin.secret), 'TOTP secret must be encrypted at rest');
   const adminChallenge = await auth.login('admin@example.com', 'smoke-admin-password', '127.0.0.1');
@@ -128,6 +131,13 @@ async function main() {
   const totpChallenge = await auth.login('admin@example.com', 'smoke-admin-password', '127.0.0.1');
   const freshSession = await auth.verifyMfa(totpChallenge.challengeToken, freshTotp);
   assert.equal(auth.verify(`Bearer ${freshSession.accessToken}`).role, 'super_admin');
+
+  const concurrentRecoveryChallenges = await Promise.all([1, 2].map(async index => {
+    const challenge = await auth.login('admin@example.com', 'smoke-admin-password', '192.0.2.70');
+    return auth.verifyMfa(challenge.challengeToken, admin.recoveryCodes[index]);
+  }));
+  assert.equal(concurrentRecoveryChallenges.length, 2);
+  assert.equal((await auth.mfaStatus(`Bearer ${concurrentRecoveryChallenges[0].accessToken}`)).recoveryCodesRemaining, 7);
 
   const nearbyCodes = [totp(admin.secret, Date.now() - 30_000), totp(admin.secret), totp(admin.secret, Date.now() + 30_000)];
   let wrongMfaCode = '000000';
