@@ -47,3 +47,5 @@ jobs:
           npm run test:webmail-trash-delete
       - name: Build customer portal
         run: npm run build
+      - name: Check guarded VPS deploy script syntax
+        run: bash -n infra/deploy-vps.sh
