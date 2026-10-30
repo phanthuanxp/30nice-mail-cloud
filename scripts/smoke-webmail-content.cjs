@@ -2,6 +2,15 @@ const assert=require('node:assert/strict');
 const {ImapFlow}=require('imapflow');
 const {WebmailService}=require('../apps/api/dist/webmail.service.js');
 
+const fs=require('node:fs');
+const path=require('node:path');
+const webmailUi=fs.readFileSync(path.join(__dirname,'../apps/portal/app/webmail/webmail-client.tsx'),'utf8');
+assert.doesNotMatch(webmailUi,/window\.prompt\(/,'link insertion uses the in-app Vietnamese dialog');
+assert.match(webmailUi,/role="dialog" aria-modal="true" aria-labelledby="wm-link-dialog-title"/,'link dialog is labelled and modal');
+assert.match(webmailUi,/event.key === 'Escape'/,'Escape closes the link dialog');
+assert.match(webmailUi,/event.shiftKey && document.activeElement === first/,'keyboard focus wraps inside the dialog');
+assert.match(webmailUi,/anchor.textContent = url.href/,'a link inserted at the caret gets visible link text');
+
 const source=[
   'From: sender@example.test',
   'To: user@example.test',
@@ -48,7 +57,7 @@ async function main(){
   assert.equal(visible.hasRemoteImages,true);
   assert.equal(visible.externalImagesVisible,true);
   assert.match(visible.html,/https:\/\/tracker\.example\/pixel\.png/,'remote image is returned after explicit opt-in');
-  console.log('Webmail content smoke checks passed: external images hidden by default; inline images preserved; opt-in loads external content.');
+  console.log('Webmail content smoke checks passed: remote images require consent; inline images work; link dialog is keyboard accessible and inserts links at a selection or caret.');
 }
 
 main().catch(error=>{console.error(error);process.exitCode=1;});

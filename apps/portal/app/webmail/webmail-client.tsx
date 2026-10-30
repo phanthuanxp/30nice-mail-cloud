@@ -20,6 +20,7 @@ async function processBulk<T>(items:T[],operation:(item:T)=>Promise<unknown>){
 function RichEditor({ html, onChange }: { html: string; onChange: (html: string, text: string) => void }) {
   const editor = useRef<HTMLDivElement>(null);
   const linkInput = useRef<HTMLInputElement>(null);
+  const linkDialog = useRef<HTMLFormElement>(null);
   const savedSelection = useRef<Range | null>(null);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
@@ -35,10 +36,42 @@ function RichEditor({ html, onChange }: { html: string; onChange: (html: string,
   }
   function openLinkDialog() {
     const selection = window.getSelection();
-    savedSelection.current = selection && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+    const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+    savedSelection.current = range && editor.current?.contains(range.commonAncestorContainer) ? range.cloneRange() : null;
     setLinkUrl('');
     setLinkError('');
     setLinkDialogOpen(true);
+  }
+  function closeLinkDialog() {
+    const range = savedSelection.current?.cloneRange() || null;
+    savedSelection.current = null;
+    setLinkDialogOpen(false);
+    window.requestAnimationFrame(() => {
+      editor.current?.focus();
+      if (!range || !editor.current?.contains(range.commonAncestorContainer)) return;
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+  }
+  function handleLinkDialogKeyDown(event: ReactKeyboardEvent<HTMLFormElement>) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeLinkDialog();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(linkDialog.current?.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled)') || []);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
   function insertLink(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -49,14 +82,33 @@ function RichEditor({ html, onChange }: { html: string; onChange: (html: string,
       setLinkError('Liên kết phải bắt đầu bằng https:// hoặc http://.');
       return;
     }
-    editor.current?.focus();
+    const root = editor.current;
+    if (!root) return;
+    root.focus();
     const selection = window.getSelection();
-    if (selection && savedSelection.current) {
-      selection.removeAllRanges();
-      selection.addRange(savedSelection.current);
+    const saved = savedSelection.current;
+    const range = saved && root.contains(saved.commonAncestorContainer) ? saved.cloneRange() : document.createRange();
+    if (!saved || !root.contains(saved.commonAncestorContainer)) {
+      range.selectNodeContents(root);
+      range.collapse(false);
     }
-    document.execCommand('createLink', false, url.href);
-    if (editor.current) onChange(editor.current.innerHTML, editor.current.innerText);
+    if (!range.collapsed) {
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.execCommand('createLink', false, url.href);
+    } else {
+      range.deleteContents();
+      const anchor = document.createElement('a');
+      anchor.href = url.href;
+      anchor.textContent = url.href;
+      range.insertNode(anchor);
+      const caret = document.createRange();
+      caret.setStartAfter(anchor);
+      caret.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(caret);
+    }
+    onChange(root.innerHTML, root.innerText);
     savedSelection.current = null;
     setLinkDialogOpen(false);
   }
@@ -71,14 +123,14 @@ function RichEditor({ html, onChange }: { html: string; onChange: (html: string,
       <button type="button" aria-label="Chèn liên kết" title="Chèn liên kết" onMouseDown={event => event.preventDefault()} onClick={openLinkDialog}><Link2 size={16} /></button>
     </div>
     <div ref={editor} className="wm-compose-body wm-rich-editor" contentEditable role="textbox" aria-label="Nội dung thư" aria-multiline="true" data-placeholder="Soạn nội dung thư…" onInput={event => onChange(event.currentTarget.innerHTML, event.currentTarget.innerText)} />
-    {linkDialogOpen && <div className="wm-link-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setLinkDialogOpen(false); }}>
-      <form className="wm-link-dialog" role="dialog" aria-modal="true" aria-labelledby="wm-link-dialog-title" onSubmit={insertLink}>
+    {linkDialogOpen && <div className="wm-link-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) closeLinkDialog(); }}>
+      <form ref={linkDialog} className="wm-link-dialog" role="dialog" aria-modal="true" aria-labelledby="wm-link-dialog-title" onSubmit={insertLink} onKeyDown={handleLinkDialogKeyDown}>
         <h2 id="wm-link-dialog-title">Chèn liên kết</h2>
-        <p>Nhập địa chỉ trang web muốn gắn vào phần nội dung đã chọn.</p>
+        <p>Nhập địa chỉ trang web muốn gắn vào phần nội dung đã chọn. Nếu chưa chọn chữ, địa chỉ sẽ được chèn làm nội dung liên kết.</p>
         <label htmlFor="wm-link-url">Địa chỉ liên kết</label>
-        <input ref={linkInput} id="wm-link-url" type="url" inputMode="url" autoComplete="url" placeholder="https://example.com" value={linkUrl} onChange={event => { setLinkUrl(event.target.value); setLinkError(''); }} aria-describedby={linkError ? 'wm-link-error' : undefined} />
+        <input ref={linkInput} id="wm-link-url" type="url" inputMode="url" autoComplete="url" required placeholder="https://example.com" value={linkUrl} onChange={event => { setLinkUrl(event.target.value); setLinkError(''); }} aria-describedby={linkError ? 'wm-link-error' : undefined} />
         {linkError && <small id="wm-link-error" className="wm-link-error" role="alert">{linkError}</small>}
-        <div className="wm-link-dialog-actions"><button type="button" onClick={() => setLinkDialogOpen(false)}>Hủy</button><button type="submit" className="wm-button-primary">Chèn</button></div>
+        <div className="wm-link-dialog-actions"><button type="button" onClick={closeLinkDialog}>Hủy</button><button type="submit" className="wm-button-primary">Chèn</button></div>
       </form>
     </div>}
   </>;
