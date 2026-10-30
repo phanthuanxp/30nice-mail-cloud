@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { updateMessageFlagState } from './webmail-state';
+import { plainTextToHtml } from './webmail-compose';
 import { Archive, ArrowLeft, Bold, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File as FileIcon, Forward, Image as ImageIcon, Inbox, Italic, Link2, List, ListOrdered, LogOut, Mail, MailOpen, Menu, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Trash2, Underline, X } from 'lucide-react';
 
 type Folder = { path: string; name: string; specialUse: string | null; messages: number; unread: number };
@@ -555,7 +556,7 @@ export default function WebmailClient() {
     const toAddresses = [...new Set([sender?.address || '', ...(replyAll ? message.to.map(value => value.address) : [])].filter(value => value && value.toLowerCase() !== own))];
     const ccAddresses = replyAll ? [...new Set(message.ccAddresses.map(value => value.address).filter((value): value is string => Boolean(value) && value.toLowerCase() !== own && !toAddresses.includes(value)))] : [];
     setShowCc(ccAddresses.length > 0); setShowBcc(false);
-    setCompose({ draftId: crypto.randomUUID(), to: toAddresses.join(', '), cc: ccAddresses.join(', '), bcc: '', subject: /^(re|aw):/i.test(message.subject) ? message.subject : `Re: ${message.subject}`, text: `\n\n────────── Thư gốc ──────────\nTừ: ${person(sender)}\n${message.text.slice(0, 2000)}`, html: '', files: [] });
+    setCompose({ draftId: crypto.randomUUID(), to: toAddresses.join(', '), cc: ccAddresses.join(', '), bcc: '', subject: /^(re|aw):/i.test(message.subject) ? message.subject : `Re: ${message.subject}`, text: `\n\n────────── Thư gốc ──────────\nTừ: ${person(sender)}\n${message.text.slice(0, 2000)}`, html: plainTextToHtml(`\n\n────────── Thư gốc ──────────\nTừ: ${person(sender)}\n${message.text.slice(0, 2000)}`), files: [] });
     setSelected(null);
   }
 
@@ -565,7 +566,7 @@ export default function WebmailClient() {
       const files = await downloadAttachments(message.uid, message.folder, message.attachments);
       const sentAt = message.date ? new Date(message.date).toLocaleString('vi-VN') : 'Không rõ';
       const quoted = `\n\n────────── Thư được chuyển tiếp ──────────\nTừ: ${person(message.from[0])} <${message.from[0]?.address || ''}>\nNgày: ${sentAt}\nChủ đề: ${message.subject}\n\n${message.text.slice(0, 2000)}`;
-      setCompose({ draftId: crypto.randomUUID(), to: '', cc: '', bcc: '', subject: /^(fwd?|wg):/i.test(message.subject) ? message.subject : `Fwd: ${message.subject}`, text: quoted, html: '', files });
+      setCompose({ draftId: crypto.randomUUID(), to: '', cc: '', bcc: '', subject: /^(fwd?|wg):/i.test(message.subject) ? message.subject : `Fwd: ${message.subject}`, text: quoted, html: plainTextToHtml(quoted), files });
       setShowCc(false); setShowBcc(false); setSelected(null);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không thể chuyển tiếp thư.'); }
     finally { setBusy(false); }
