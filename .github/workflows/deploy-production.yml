@@ -1,0 +1,121 @@
+name: Deploy Mail Cloud to VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Select this only to release the current main commit to production
+        required: true
+        type: choice
+        options:
+          - NO
+          - DEPLOY_TO_PRODUCTION
+        default: NO
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mail-cloud-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && inputs.confirm == 'DEPLOY_TO_PRODUCTION'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VPS_HOST: ${{ secrets.MAILCLOUD_VPS_HOST }}
+      VPS_USER: ${{ secrets.MAILCLOUD_VPS_USER }}
+      VPS_SSH_PRIVATE_KEY: ${{ secrets.MAILCLOUD_VPS_SSH_PRIVATE_KEY }}
+      VPS_KNOWN_HOSTS: ${{ secrets.MAILCLOUD_VPS_KNOWN_HOSTS }}
+      VPS_SSH_PORT: ${{ vars.MAILCLOUD_VPS_SSH_PORT || '22' }}
+
+    steps:
+      - name: Check out the exact main revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Confirm current main revision
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Verify authentication and authorization
+        run: npm run test:auth
+
+      - name: Verify mailbox and tenant provisioning
+        run: |
+          npm run test:mailbox
+          npm run test:domain
+
+      - name: Verify Mailcow adapter
+        run: npm run test:mailcow
+
+      - name: Verify webmail features
+        run: |
+          npm run test:webmail-content
+          npm run test:webmail-bcc
+          npm run test:webmail-contacts
+          npm run test:webmail-search
+          npm run test:webmail-send-rate
+          npm run test:webmail-trash-delete
+
+      - name: Build customer portal
+        run: npm run build
+
+      - name: Check VPS deploy script syntax
+        run: bash -n infra/deploy-vps.sh
+
+      - name: Install pinned VPS SSH credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_PRIVATE_KEY"
+          test -n "$VPS_KNOWN_HOSTS"
+          [[ "$VPS_SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$HOME/.ssh/mailcloud_deploy"
+          chmod 600 "$HOME/.ssh/mailcloud_deploy"
+          ssh-keygen -y -P '' -f "$HOME/.ssh/mailcloud_deploy" >/dev/null
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy and run VPS health checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/mailcloud_deploy" \
+            -p "$VPS_SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null \
+            "$VPS_USER@$VPS_HOST" "DEPLOY_COMMIT_SHA=$GITHUB_SHA bash -s" \
+            < infra/deploy-vps.sh
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 \
+            --retry-connrefused --max-time 15 \
+            https://admin.30nice.vn/api/health \
+            -o "$RUNNER_TEMP/mailcloud-health.json"
+          node -e 'const fs=require("node:fs"); process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).status === "ok" ? 0 : 1)' \
+            "$RUNNER_TEMP/mailcloud-health.json"
+          echo "Public production health endpoint returned status=ok for $GITHUB_SHA."
