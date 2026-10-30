@@ -1,0 +1,49 @@
+name: Verify Mail Cloud
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mail-cloud-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Verify authentication and authorization
+        run: npm run test:auth
+      - name: Verify mailbox and tenant provisioning
+        run: |
+          npm run test:mailbox
+          npm run test:domain
+      - name: Verify Mailcow adapter
+        run: npm run test:mailcow
+      - name: Verify webmail features
+        run: |
+          npm run test:webmail-content
+          npm run test:webmail-bcc
+          npm run test:webmail-contacts
+          npm run test:webmail-search
+          npm run test:webmail-send-rate
+          npm run test:webmail-trash-delete
+      - name: Build customer portal
+        run: npm run build
