@@ -71,7 +71,9 @@ jobs:
           npm run test:webmail-send-rate
           npm run test:webmail-login-rate
           npm run test:webmail-trash-delete
+          npm run test:webmail-request-sequence
       - name: Build customer portal
         run: npm run build
       - name: Check guarded VPS deploy script syntax
         run: bash -n infra/deploy-vps.sh
+
