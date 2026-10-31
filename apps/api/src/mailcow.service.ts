@@ -36,6 +36,28 @@ export class MailcowService {
     return exists?[{type:'success',msg:'Domain already exists'}]:this.addDomain(domain);
   }
   async addMailbox(domain:string,localPart:string,quotaGb:number,password:string){return this.request('/api/v1/add/mailbox',{local_part:localPart,domain,password,password2:password,quota:quotaGb*1024,active:1});}
+  async provisionMailbox(domain:string,localPart:string,quotaGb:number,password:string,reconcileExisting=false){
+    if(this.mode!=='production') return this.addMailbox(domain,localPart,quotaGb,password);
+    if(!this.baseUrl||!this.apiKey) throw new Error('Mailcow API is not configured');
+    const address=`${localPart}@${domain}`;
+    const list=async()=>{
+      const response=await fetch(`${this.baseUrl}/api/v1/get/mailbox/all`,{headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(10000)});
+      if(!response.ok) throw new Error(`Mailcow API HTTP ${response.status}`);
+      const result=await response.json().catch(()=>null);
+      if(!Array.isArray(result)) throw new Error('Mailcow returned an invalid mailbox list');
+      return result.some((item:{username?:string}|null)=>item?.username?.toLowerCase()===address.toLowerCase());
+    };
+    const exists=await list();
+    if(exists){
+      if(!reconcileExisting) throw new Error('Mailbox already exists in Mailcow; use retry to reconcile it');
+      return this.editMailbox(address,quotaGb,'active',password);
+    }
+    try { return await this.addMailbox(domain,localPart,quotaGb,password); }
+    catch(error){
+      try { if(await list()) return this.editMailbox(address,quotaGb,'active',password); } catch {}
+      throw error;
+    }
+  }
   async editMailbox(address:string,quotaGb?:number,status?:'active'|'disabled',password?:string){return this.request('/api/v1/edit/mailbox',{username:address,quota:quotaGb===undefined?undefined:quotaGb*1024,active:status===undefined?undefined:status==='disabled'?0:1,password,password2:password});}
 }
 
