@@ -76,6 +76,10 @@ async function main(){
   assert.equal(visible.hasRemoteImages,true);
   assert.equal(visible.externalImagesVisible,true);
   assert.match(visible.html,/https:\/\/tracker\.example\/pixel\.png/,'remote image is returned after explicit opt-in');
+  const webmailUi=require('node:fs').readFileSync(require('node:path').join(__dirname,'../apps/portal/app/webmail/webmail-client.tsx'),'utf8');
+  assert.doesNotMatch(webmailUi,/window\.confirm\(/,'permanent deletion uses the in-app confirmation dialog');
+  assert.match(webmailUi,/role=\"alertdialog\" aria-modal=\"true\" aria-labelledby=\"wm-delete-title\"/,'delete confirmation is announced accessibly');
+  assert.match(webmailUi,/ref=\{deleteCancelRef\}/,'the safe cancel action receives initial focus');
   console.log('Webmail content smoke checks passed: remote images require consent; inline images work; link dialog is keyboard accessible and inserts links at a selection or caret.');
 }
 
