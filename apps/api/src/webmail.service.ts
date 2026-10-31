@@ -326,6 +326,19 @@ export class WebmailService {
     });
   }
 
+  private async messageSnippet(source?: Buffer) {
+    if (!source?.length) return '';
+    try {
+      const parsed = await simpleParser(source);
+      const text = (parsed.text || sanitizeHtml(parsed.html || '', { allowedTags: [], allowedAttributes: {} }))
+        .replace(/[\s\u00a0]+/g, ' ')
+        .trim();
+      return Array.from(text).slice(0, 180).join('');
+    } catch {
+      return '';
+    }
+  }
+
   async messages(token: string | undefined, folder: string, query = '', requestedPage = 1, filter: 'all' | 'unread' | 'starred' = 'all') {
     if (!folder || (folder !== '*' && folder.length > 255)) throw new BadRequestException('Thư mục không hợp lệ');
     if (query.length > 200) throw new BadRequestException('Từ khóa tìm kiếm tối đa 200 ký tự');
@@ -379,7 +392,7 @@ export class WebmailService {
         : listedFolders.filter(item => item.path === folder);
       if (folder !== '*' && !folders.length) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
       let total = 0;
-      const candidates: Array<{ uid: number; folder: string; date: string | null; subject: string; from: Array<{ address: string; name: string }>; to: Array<{ address: string; name: string }>; seen: boolean; flagged: boolean; draft: boolean; size: number }> = [];
+      const candidates: Array<{ uid: number; folder: string; date: string | null; subject: string; snippet: string; from: Array<{ address: string; name: string }>; to: Array<{ address: string; name: string }>; seen: boolean; flagged: boolean; draft: boolean; size: number }> = [];
       for (const mailbox of folders) {
         const lock = await client.getMailboxLock(mailbox.path, { readOnly: true });
         try {
@@ -390,13 +403,13 @@ export class WebmailService {
           ? matchingUids.slice(-page * pageSize).reverse()
           : matchingUids.slice(Math.max(0, matchingUids.length - page * pageSize), Math.max(0, matchingUids.length - (page - 1) * pageSize)).reverse();
         if (!candidateUids.length) continue;
-        const fetched = await client.fetchAll(candidateUids, { envelope: true, flags: true, internalDate: true, size: true, uid: true }, { uid: true });
-        candidates.push(...fetched.map(item => {
+        const fetched = await client.fetchAll(candidateUids, { envelope: true, flags: true, internalDate: true, size: true, uid: true, source: { start: 0, maxLength: 8192 } }, { uid: true });
+        candidates.push(...await Promise.all(fetched.map(async item => {
           const from = (item.envelope?.from || []) as MailAddress[];
           const to = (item.envelope?.to || []) as MailAddress[];
           const date = item.envelope?.date || item.internalDate || null;
-          return { uid: item.uid, folder: mailbox.path, subject: item.envelope?.subject || '(Không có tiêu đề)', from: from.map(address => ({ address: address.address || '', name: address.name || '' })), to: to.map(address => ({ address: address.address || '', name: address.name || '' })), date: date ? new Date(date).toISOString() : null, seen: item.flags?.has('\\Seen') || false, flagged: item.flags?.has('\\Flagged') || false, draft: item.flags?.has('\\Draft') || false, size: item.size || 0 };
-        }));
+          return { uid: item.uid, folder: mailbox.path, subject: item.envelope?.subject || '(Không có tiêu đề)', snippet: await this.messageSnippet(item.source), from: from.map(address => ({ address: address.address || '', name: address.name || '' })), to: to.map(address => ({ address: address.address || '', name: address.name || '' })), date: date ? new Date(date).toISOString() : null, seen: item.flags?.has('\\Seen') || false, flagged: item.flags?.has('\\Flagged') || false, draft: item.flags?.has('\\Draft') || false, size: item.size || 0 };
+        })));
         } finally { lock.release(); }
       }
       candidates.sort((a, b) => (Date.parse(b.date || '') || 0) - (Date.parse(a.date || '') || 0));
