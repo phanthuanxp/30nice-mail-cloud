@@ -80,6 +80,7 @@ jobs:
           npm run test:webmail-send-rate
           npm run test:webmail-login-rate
           npm run test:webmail-trash-delete
+          npm run test:webmail-request-sequence
 
       - name: Build customer portal
         run: npm run build
@@ -123,3 +124,4 @@ jobs:
           node -e 'const fs=require("node:fs"); process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).status === "ok" ? 0 : 1)' \
             "$RUNNER_TEMP/mailcloud-health.json"
           echo "Public production health endpoint returned status=ok for $GITHUB_SHA."
+

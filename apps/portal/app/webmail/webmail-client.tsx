@@ -3,6 +3,7 @@
 import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { updateMessageFlagState } from './webmail-state';
 import { plainTextToHtml } from './webmail-compose';
+import { RequestSequence } from './request-sequence.cjs';
 import { Archive, ArrowLeft, Bold, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File as FileIcon, Forward, Image as ImageIcon, Inbox, Italic, Link2, List, ListOrdered, LogOut, Mail, MailOpen, Menu, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Trash2, Underline, X } from 'lucide-react';
 
 type Folder = { path: string; name: string; specialUse: string | null; messages: number; unread: number };
@@ -172,6 +173,8 @@ export default function WebmailClient() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [selectedUids, setSelectedUids] = useState<Set<string>>(new Set());
+  const messageRequestSequence = useRef(new RequestSequence());
+  const foregroundMessageRequest = useRef(0);
   const [compose, setCompose] = useState<Compose | null>(null);
   const [draftStatus, setDraftStatus] = useState('');
   const [showCc, setShowCc] = useState(false);
@@ -237,10 +240,13 @@ export default function WebmailClient() {
   }, [request]);
 
   const loadMessages = useCallback(async (activeFolder = folder, search = query, activePage = page, activeFilter = listFilter, silent = false) => {
-    if (!silent) setBusy(true);
+    if (silent && foregroundMessageRequest.current) return;
+    const requestSequence = messageRequestSequence.current.begin();
+    if (!silent) { foregroundMessageRequest.current = requestSequence; setBusy(true); }
     try {
       const searchFolder = search.trim() ? '*' : activeFolder;
       const data = await request(`/messages?folder=${encodeURIComponent(searchFolder)}&q=${encodeURIComponent(search)}&page=${activePage}&filter=${activeFilter}`) as { messages: MailItem[]; total: number };
+      if (!messageRequestSequence.current.isCurrent(requestSequence)) return;
       setItems(data.messages);
       setTotal(data.total);
       if (silent) {
@@ -251,8 +257,8 @@ export default function WebmailClient() {
         });
       } else setSelectedUids(new Set());
       setLastSynced(new Date());
-    } catch (reason) { if (!silent) setError(reason instanceof Error ? reason.message : 'Không tải được danh sách thư.'); }
-    finally { if (!silent) setBusy(false); }
+    } catch (reason) { if (!silent && messageRequestSequence.current.isCurrent(requestSequence)) setError(reason instanceof Error ? reason.message : 'Không tải được danh sách thư.'); }
+    finally { if (!silent && foregroundMessageRequest.current === requestSequence) { foregroundMessageRequest.current = 0; setBusy(false); } }
   }, [folder, listFilter, page, query, request]);
 
   const enterMailbox = useCallback(async (address?: string) => {
@@ -316,6 +322,9 @@ export default function WebmailClient() {
   }
 
   async function signOut() {
+    messageRequestSequence.current.invalidate();
+    foregroundMessageRequest.current = 0;
+    setBusy(false);
     try { await request('/logout', { method: 'POST' }); } finally { setAuthenticated(false); setAccount(''); setItems([]); setSelected(null); setFolders([]); setNotice(''); }
   }
 

@@ -21,7 +21,9 @@
     "test:webmail-send-rate": "npm run build:api && node scripts/smoke-webmail-send-rate.cjs",
     "test:webmail-login-rate": "npm run build:api && node scripts/smoke-webmail-login-rate.cjs",
     "test:webmail-trash-delete": "npm run build:api && node scripts/smoke-webmail-trash-delete.cjs",
+    "test:webmail-request-sequence": "node scripts/smoke-webmail-request-sequence.cjs",
     "typecheck": "npm run typecheck --workspace=@30nice/portal && npm run typecheck --workspace=@30nice/api",
     "test": "npm run typecheck"
   }
 }
+
