@@ -14,7 +14,7 @@ ImapFlow.prototype.list = async function () { return folders; };
 ImapFlow.prototype.getMailboxLock = async function () { return { release() {} }; };
 ImapFlow.prototype.search = async function (criteria) { criteriaSeen.push(criteria); return [1, 2, 3]; };
 ImapFlow.prototype.fetchAll = async function (uids, options = {}) {
-  return uids.map(uid => ({ uid, envelope: { date: new Date('2026-10-20T10:00:00Z'), from: [], to: [] }, flags: new Set(), ...(options.source ? { source: Buffer.from('From: sender@example.test\\r\\nContent-Type: text/plain; charset=utf-8\\r\\n\\r\\nMessage preview for item ' + uid) } : {}) }));
+  return uids.map(uid => ({ uid, envelope: { date: new Date('2026-10-20T10:00:00Z'), from: [], to: [] }, flags: new Set(), ...(options.source ? { source: Buffer.from('From: sender@example.test\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nMessage preview for item ' + uid) } : {}) }));
 };
 
 async function main() {
