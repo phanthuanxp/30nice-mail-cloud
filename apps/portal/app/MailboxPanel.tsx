@@ -23,6 +23,7 @@ export default function MailboxPanel() {
   const [messageIsError, setMessageIsError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState('');
+  const [retryingJobId, setRetryingJobId] = useState('');
 
   const load = useCallback(async () => {
     if (!tenant) { setItems([]); return; }
@@ -86,8 +87,24 @@ export default function MailboxPanel() {
       setMessage(result.temporaryPassword ? 'Đã tạo hộp thư. Sao chép mật khẩu tạm thời và gửi cho người dùng qua kênh an toàn.' : 'Đã tạo hộp thư thành công.');
       setAddress(''); setPassword(''); await Promise.all([load(), loadJobs()]);
     } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : 'Không thể tạo hộp thư.'); setMessageIsError(true);
+      setMessage(reason instanceof Error ? reason.message : 'Không thể tạo hộp thư.'); setMessageIsError(true); await loadJobs();
     } finally { setLoading(false); }
+  }
+
+  async function retryProvisioning(job: ProvisioningJob) {
+    setRetryingJobId(job.id); setPasswordReveal(''); setMessage(''); setMessageIsError(false);
+    try {
+      const response = await fetch(`/api/api/v1/tenants/${tenant}/provisioning-jobs/${job.id}/retry`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Không thể thử lại cấp phát.');
+      setPasswordReveal(result.temporaryPassword || '');
+      setMessage(result.temporaryPassword ? 'Đã đồng bộ hộp thư với Mailcow. Sao chép mật khẩu mới và gửi qua kênh an toàn.' : 'Đã thử lại cấp phát hộp thư.');
+      await Promise.all([load(), loadJobs()]);
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : 'Không thể thử lại cấp phát.');
+      setMessageIsError(true);
+      await loadJobs();
+    } finally { setRetryingJobId(''); }
   }
 
   async function update(item: Mailbox, changes: Partial<Pick<Mailbox, 'quotaGb' | 'status'>>) {
@@ -140,7 +157,7 @@ export default function MailboxPanel() {
       {jobs.slice(0, 10).map(job => <div className="provisioningJobRow" key={job.id}>
         <span className={`provisioningJobStatus ${job.status}`}>{({ queued: 'Đang chờ', running: 'Đang xử lý', succeeded: 'Thành công', failed: 'Thất bại', dead_letter: 'Cần xử lý' } as Record<string, string>)[job.status] || job.status}</span>
         <div className="provisioningJobInfo"><b>{job.jobType === 'mailbox.provision' ? 'Tạo hộp thư' : job.jobType}</b><small>{job.idempotencyKey.replace(/^mailbox:/, '')}</small>{job.lastError && <small className="provisioningJobError">{job.lastError}</small>}</div>
-        <div className="provisioningJobMeta"><span>{job.attempts} lần thử</span><time dateTime={job.updatedAt}>{job.updatedAt ? new Date(job.updatedAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' }) : ''}</time></div>
+        <div className="provisioningJobMeta"><span>{job.attempts} lần thử</span><time dateTime={job.updatedAt}>{job.updatedAt ? new Date(job.updatedAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' }) : ''}</time>{job.jobType === 'mailbox.provision' && ['failed', 'dead_letter'].includes(job.status) && <button className="mailboxAction" disabled={Boolean(retryingJobId) || !tenant} onClick={() => void retryProvisioning(job)}>{retryingJobId === job.id ? <RefreshCw className="spin" size={13} /> : <RefreshCw size={13} />} Thử lại</button>}</div>
       </div>)}
     </section>
     <div className="mailboxList">
