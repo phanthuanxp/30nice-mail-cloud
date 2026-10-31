@@ -80,6 +80,9 @@ async function main(){
   assert.doesNotMatch(webmailUi,/window\.confirm\(/,'permanent deletion uses the in-app confirmation dialog');
   assert.match(webmailUi,/role=\"alertdialog\" aria-modal=\"true\" aria-labelledby=\"wm-delete-title\"/,'delete confirmation is announced accessibly');
   assert.match(webmailUi,/ref=\{deleteCancelRef\}/,'the safe cancel action receives initial focus');
+  assert.match(webmailUi,/inert=\{Boolean\(deleteConfirmation\)\}/,'background mail controls are inert while the dialog is open');
+  assert.match(webmailUi,/deleteReturnFocusRef\.current = document\.activeElement/,'closing the dialog can return focus to its trigger');
+  assert.match(webmailUi,/!deleteDialogRef\.current\?\.contains\(document\.activeElement\)/,'keyboard focus cannot tab outside the dialog');
   console.log('Webmail content smoke checks passed: remote images require consent; inline images work; link dialog is keyboard accessible and inserts links at a selection or caret.');
 }
 
