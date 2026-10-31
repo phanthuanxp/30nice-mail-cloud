@@ -331,7 +331,7 @@ export class WebmailService {
     try {
       const parsed = await simpleParser(source);
       const text = (parsed.text || sanitizeHtml(parsed.html || '', { allowedTags: [], allowedAttributes: {} }))
-        .replace(/[\\s\\u00a0]+/g, ' ')
+        .replace(/[\s\u00a0]+/g, ' ')
         .trim();
       return Array.from(text).slice(0, 180).join('');
     } catch {
