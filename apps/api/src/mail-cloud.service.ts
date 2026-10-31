@@ -54,6 +54,39 @@ export class MailCloudService {
   async verifyDomain(tenantId:string,domainId:string,token:string){const candidates=await this.database.query<{domain:string;verification_token:string}>('select domain,verification_token from domains where id=$1::uuid and tenant_id=$2::uuid and status=\'pending\'',[domainId,tenantId]);const candidate=candidates?.[0];if(!candidate)throw new NotFoundException('Tên miền đang chờ xác minh không tồn tại');if(!token||token!==candidate.verification_token)throw new BadRequestException('Mã xác minh không hợp lệ');let records:string[][];try{records=await dns.resolveTxt(`_30nice-verification.${candidate.domain}`);}catch{throw new BadRequestException(`Chưa tìm thấy TXT tại _30nice-verification.${candidate.domain}`);}if(!records.some(record=>record.join('')===candidate.verification_token))throw new BadRequestException('Bản ghi TXT xác minh chưa khớp');const rows=await this.database.query('update domains set status=\'verified\' where id=$1::uuid and tenant_id=$2::uuid and status=\'pending\' returning id::text,tenant_id::text as "tenantId",domain,status',[domainId,tenantId]);if(!rows?.length)throw new BadRequestException('Tên miền đã được xác minh hoặc trạng thái đã thay đổi');this.record('domain.verify',domainId);return rows[0];}
   async listMailboxes(tenantId:string){const rows=await this.database.query('select id::text,tenant_id::text as "tenantId",address,quota_gb as "quotaGb",status from mailboxes where tenant_id=$1::uuid order by address',[tenantId]); return rows??this.mailboxes.filter(m=>m.tenantId===tenantId);}
   async listProvisioningJobs(tenantId:string){const rows=await this.database.query('select id::text,tenant_id::text as "tenantId",idempotency_key as "idempotencyKey",job_type as "jobType",status,attempts,last_error as "lastError",created_at as "createdAt",updated_at as "updatedAt" from provisioning_jobs where tenant_id=$1::uuid order by created_at desc limit 100',[tenantId]); return rows??[];}
+  async retryMailboxProvisioning(tenantId:string,jobId:string){
+    const claimed=await this.database.query<{id:string;idempotency_key:string;payload?:{quotaGb?:number}}>("update provisioning_jobs set status='running',updated_at=now() where id=$1::uuid and tenant_id=$2::uuid and job_type='mailbox.provision' and status in ('failed','dead_letter') returning id::text,idempotency_key,payload",[jobId,tenantId]);
+    if(!claimed) throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng');
+    const job=claimed[0];
+    if(!job) throw new NotFoundException('Không tìm thấy tác vụ lỗi có thể thử lại');
+    const address=job.idempotency_key.replace(/^mailbox:/,'').toLowerCase();
+    const parts=address.split('@');
+    const quota=Number(job.payload?.quotaGb??5);
+    if(parts.length!==2||!Number.isInteger(quota)||quota<1||quota>1000){
+      await this.database.query("update provisioning_jobs set status='failed',last_error='Invalid provisioning payload',updated_at=now() where id=$1::uuid and tenant_id=$2::uuid",[jobId,tenantId]);
+      throw new BadRequestException('Dữ liệu cấp phát không hợp lệ; cần kiểm tra thủ công');
+    }
+    const domainRows=await this.database.query<{id:string;domain:string}>("select id::text,domain from domains where tenant_id=$1::uuid and domain=$2 and status='verified'",[tenantId,parts[1]]);
+    if(!domainRows?.[0]){
+      await this.database.query("update provisioning_jobs set status='failed',last_error='Verified domain not found',updated_at=now() where id=$1::uuid and tenant_id=$2::uuid",[jobId,tenantId]);
+      throw new BadRequestException('Tên miền không còn được xác minh; chưa thể thử lại');
+    }
+    const password=`N${randomBytes(18).toString('base64url')}!A1`;
+    let mailboxId:string|undefined;
+    try {
+      const inserted=await this.database.query<{id:string;tenantId:string;address:string;quotaGb:number;status:string}>('insert into mailboxes(tenant_id,domain_id,address,quota_gb) values($1::uuid,$2::uuid,$3,$4) returning id::text,tenant_id::text as "tenantId",address,quota_gb as "quotaGb",status',[tenantId,domainRows[0].id,address,quota]);
+      if(!inserted?.[0]) throw new Error('Không thể ghi nhận hộp thư trong cơ sở dữ liệu');
+      const mailbox=inserted[0]; mailboxId=mailbox.id;
+      await this.mailcow.provisionMailbox(parts[1],parts[0],quota,password,true);
+      await this.database.query("update provisioning_jobs set status='succeeded',attempts=attempts+1,last_error=null,updated_at=now() where id=$1::uuid and tenant_id=$2::uuid",[jobId,tenantId]);
+      this.record('mailbox.provision_retry',mailbox.id);
+      return {...mailbox,provisioningJobId:jobId,provisioningStatus:'succeeded',temporaryPassword:password};
+    } catch(error) {
+      if(mailboxId) await this.database.query('delete from mailboxes where id=$1::uuid and tenant_id=$2::uuid',[mailboxId,tenantId]).catch(()=>undefined);
+      await this.database.query("update provisioning_jobs set status='failed',attempts=attempts+1,last_error=$3,updated_at=now() where id=$1::uuid and tenant_id=$2::uuid",[jobId,tenantId,error instanceof Error?error.message:'Mailbox retry failed']).catch(()=>undefined);
+      throw new BadRequestException(error instanceof Error?error.message:'Không thể thử lại cấp phát hộp thư');
+    }
+  }
   async createMailbox(tenantId:string,body:{address?:string;quotaGb?:number;password?:string}) {
     const quota=body.quotaGb??5;
     const address=body.address?.trim().toLowerCase()??'';
@@ -75,8 +108,8 @@ export class MailCloudService {
       mailbox=mailboxRows[0];
       try {
         const jobs=await this.database.query<{id:string}>(
-          'insert into provisioning_jobs(tenant_id,idempotency_key,job_type) values($1::uuid,$2,\'mailbox.provision\') on conflict (idempotency_key) do update set status=\'queued\',last_error=null,updated_at=now() where provisioning_jobs.status in (\'failed\',\'dead_letter\') returning id::text',
-          [tenantId,`mailbox:${address}`],
+          "insert into provisioning_jobs(tenant_id,idempotency_key,job_type,payload) values($1::uuid,$2,'mailbox.provision',$3::jsonb) on conflict (idempotency_key) do update set status='queued',payload=excluded.payload,last_error=null,updated_at=now() where provisioning_jobs.status in ('failed','dead_letter') returning id::text",
+          [tenantId,`mailbox:${address}`,JSON.stringify({quotaGb:quota})],
         );
         jobId=jobs?.[0]?.id??null;
       } catch(error) {
@@ -87,7 +120,7 @@ export class MailCloudService {
       mailbox={id:`mailbox-${Date.now()}`,tenantId,address,quotaGb:quota,status:'active'};
     }
     try {
-      await this.mailcow.addMailbox(domain,localPart,quota,password);
+      await this.mailcow.provisionMailbox(domain,localPart,quota,password);
     } catch(error) {
       if(rows) {
         await this.database.query('delete from mailboxes where id=$1::uuid and tenant_id=$2::uuid',[mailbox.id,tenantId]).catch(()=>undefined);
