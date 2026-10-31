@@ -13,8 +13,8 @@ ImapFlow.prototype.logout = async function () {};
 ImapFlow.prototype.list = async function () { return folders; };
 ImapFlow.prototype.getMailboxLock = async function () { return { release() {} }; };
 ImapFlow.prototype.search = async function (criteria) { criteriaSeen.push(criteria); return [1, 2, 3]; };
-ImapFlow.prototype.fetchAll = async function (uids) {
-  return uids.map(uid => ({ uid, envelope: { date: new Date('2026-10-20T10:00:00Z'), from: [], to: [] }, flags: new Set() }));
+ImapFlow.prototype.fetchAll = async function (uids, options = {}) {
+  return uids.map(uid => ({ uid, envelope: { date: new Date('2026-10-20T10:00:00Z'), from: [], to: [] }, flags: new Set(), ...(options.source ? { source: Buffer.from('From: sender@example.test\\r\\nContent-Type: text/plain; charset=utf-8\\r\\n\\r\\nMessage preview for item ' + uid) } : {}) }));
 };
 
 async function main() {
@@ -22,6 +22,8 @@ async function main() {
   const session = await service.login('user@example.test', 'test-password', '127.0.0.1');
   const result = await service.messages(session.token, '*', 'from:alice@example.test to:bob@example.test cc:ops@example.test subject:"Invoice Q3" after:2026/10/01 before:2026-10-28 is:unread is:starred quarterly report');
   assert.equal(result.total, 6);
+  assert.match(result.messages[0].snippet, /Message preview for item/,'message list includes a readable body preview');
+  assert.ok(result.messages[0].snippet.length <= 180,'body preview is bounded');
   assert.equal(criteriaSeen.length, 2, 'search spans non-trash folders');
   for (const criteria of criteriaSeen) {
     assert.equal(criteria.from, 'alice@example.test');
