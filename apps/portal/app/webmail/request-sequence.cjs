@@ -18,4 +18,3 @@ class RequestSequence {
 }
 
 module.exports = { RequestSequence };
-

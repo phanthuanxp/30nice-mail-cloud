@@ -12,4 +12,3 @@ sequence.invalidate();
 assert.equal(sequence.isCurrent(latest), false, 'signing out invalidates an in-flight mailbox response');
 
 console.log('Webmail request sequence smoke checks passed: stale view and post-logout responses are ignored.');
-

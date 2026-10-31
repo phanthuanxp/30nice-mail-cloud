@@ -76,4 +76,3 @@ jobs:
         run: npm run build
       - name: Check guarded VPS deploy script syntax
         run: bash -n infra/deploy-vps.sh
-

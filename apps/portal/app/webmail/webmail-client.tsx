@@ -647,4 +647,3 @@ export default function WebmailClient() {
     <div className="wm-mobile-compose"><button onClick={() => { setCompose(newCompose()); setShowCc(false); setShowBcc(false); }}><PenLine size={19} /></button></div>
   </div>;
 }
-

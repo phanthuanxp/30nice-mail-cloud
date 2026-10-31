@@ -26,4 +26,3 @@
     "test": "npm run typecheck"
   }
 }
-

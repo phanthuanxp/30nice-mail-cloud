@@ -3,4 +3,3 @@ export class RequestSequence {
   isCurrent(sequence: number): boolean;
   invalidate(): void;
 }
-
