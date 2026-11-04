@@ -60,6 +60,7 @@ jobs:
         run: |
           npm run test:mailbox
           npm run test:domain
+          node scripts/smoke-tenant-create.cjs
       - name: Verify Mailcow adapter
         run: npm run test:mailcow
       - name: Verify webmail features
