@@ -16,6 +16,7 @@ async function main() {
       if (sql.startsWith('select id::text,domain from domains')) return [{ id: 'domain-id', domain: 'example.test' }];
       if (sql.startsWith('insert into mailboxes')) return [{ id: 'new-mailbox-id', tenantId: values[0], address: values[2], quotaGb: values[3], status: 'active' }];
       if (sql.startsWith('insert into provisioning_jobs')) return [{ id: 'provision-job-id' }];
+      if (sql.startsWith('update provisioning_jobs set status=\'running\'')) return values[1] === 'tenant-id' ? [{ id: values[0], idempotency_key: 'mailbox:failed@example.test', payload: { quotaGb: 12 } }] : [];
       if (sql.startsWith('update provisioning_jobs')) { provisioningWrites.push({ sql, values }); return []; }
       if (sql.startsWith('select id::text,tenant_id::text as "tenantId",idempotency_key')) {
         jobsTenant = values[0];
@@ -35,6 +36,7 @@ async function main() {
   };
   const mailcow = {
     addMailbox: async () => { if (failProvisioning) throw new Error('Mailcow provisioning failure'); },
+    provisionMailbox: async (...args) => { resetCalls.push(args); },
     editMailbox: async (...args) => {
       if (failMailcow) throw new Error('Mailcow temporarily unavailable');
       resetCalls.push(args);
@@ -78,6 +80,16 @@ async function main() {
   await assert.rejects(service.createMailbox('tenant-id', { address: 'failed@example.test', quotaGb: 5, password: 'provided-password' }));
   assert.equal(provisioningWrites[1].values[1], 'tenant-id', 'failed job update binds its tenant');
   assert.ok(provisioningWrites[1].sql.includes('tenant_id=$2::uuid'));
+  failProvisioning = false;
+  const retried = await service.retryMailboxProvisioning('tenant-id', 'job-id');
+  assert.equal(retried.address, 'failed@example.test');
+  assert.equal(retried.quotaGb, 12, 'retry restores the original quota from the job payload');
+  assert.equal(retried.provisioningStatus, 'succeeded');
+  assert.equal(resetCalls.at(-1)[0], 'example.test');
+  assert.equal(resetCalls.at(-1)[1], 'failed');
+  assert.equal(resetCalls.at(-1)[2], 12);
+  assert.equal(resetCalls.at(-1)[4], true, 'retry explicitly reconciles an uncertain Mailcow result');
+  await assert.rejects(service.retryMailboxProvisioning('other-tenant', 'job-id'));
   console.log('Mailbox operations smoke checks passed: tenant-scoped rollback, provisioning state, quota/status updates, and password reset.');
 }
 
