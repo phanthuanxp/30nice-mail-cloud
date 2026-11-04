@@ -179,7 +179,7 @@ function Dashboard() {
           <div className="pagetop">
             <div>
               <div className="eyebrow">
-                MAIL HOSTING PLATFORM <span>·</span> VERSION 0.3.0
+                MAIL HOSTING PLATFORM <span>·</span> VERSION 0.5.0
               </div>
               <h1>{active}</h1>
               <p>
