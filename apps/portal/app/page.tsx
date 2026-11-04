@@ -12,7 +12,7 @@ import {
   Plus,
   Search,
   ArrowUpRight,
-  CheckCircle2,
+  RefreshCw,
   Clock3,
   AlertTriangle,
   ChevronDown,
@@ -34,6 +34,8 @@ type Tenant = {
   mailboxes: number;
   status: string;
 };
+type HealthSnapshot = { productionReady?: boolean; environment?: string; database?: { configured?: boolean; connected?: boolean }; mailcow?: { mode?: string; configured?: boolean; healthy?: boolean; httpStatus?: number } };
+type ApiInfo = { version?: string };
 const tenants: Tenant[] = [];
 const menus = [
   { label: "Tổng quan", icon: LayoutDashboard },
@@ -77,34 +79,71 @@ function Dashboard() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("Tất cả");
   const [data, setData] = useState<Tenant[]>(tenants);
+  const [health, setHealth] = useState<HealthSnapshot | null>(null);
+  const [apiInfo, setApiInfo] = useState<ApiInfo | null>(null);
+  const [healthLoading, setHealthLoading] = useState(true);
+  const [healthError, setHealthError] = useState(false);
+  const [healthCheckedAt, setHealthCheckedAt] = useState<Date | null>(null);
+  const [healthRefresh, setHealthRefresh] = useState(0);
+  const [tenantLoadError, setTenantLoadError] = useState(false);
   useEffect(() => {
     fetch("/api/api/v1/tenants", { headers: { "x-role": "super_admin" } })
       .then((r) => r.json())
       .then(async (items) => {
+        if (!Array.isArray(items)) throw new Error("Invalid tenant response");
         const enriched = await Promise.all(
           items.map(async (t: Tenant) => {
-            const domains = await fetch(`/api/api/v1/tenants/${t.id}/domains`, {
-              headers: { "x-role": "super_admin" },
-            }).then((r) => r.json());
-            const mailboxes = await fetch(
-              `/api/api/v1/tenants/${t.id}/mailboxes`,
-              { headers: { "x-role": "super_admin" } },
-            ).then((r) => r.json());
+            const [domainResponse, mailboxResponse] = await Promise.all([
+              fetch(`/api/api/v1/tenants/${t.id}/domains`, { headers: { "x-role": "super_admin" } }),
+              fetch(`/api/api/v1/tenants/${t.id}/mailboxes`, { headers: { "x-role": "super_admin" } }),
+            ]);
+            if (!domainResponse.ok || !mailboxResponse.ok) throw new Error("Tenant details unavailable");
+            const [domains, mailboxes] = await Promise.all([domainResponse.json(), mailboxResponse.json()]);
+            if (!Array.isArray(domains) || !Array.isArray(mailboxes)) throw new Error("Invalid tenant details");
             return {
               ...t,
               domain: domains[0]?.domain ?? "Chưa có domain",
               mailboxes: mailboxes.length,
-              status:
-                domains[0]?.status === "verified"
-                  ? "Đã xác minh"
-                  : "Chờ xác minh",
+              status: domains[0]?.status === "verified" ? "Đã xác minh" : "Chờ xác minh",
             };
           }),
         );
         setData(enriched);
+        setTenantLoadError(false);
       })
-      .catch(() => setData([]));
+      .catch(() => { setData([]); setTenantLoadError(true); });
   }, []);
+  useEffect(() => {
+    let active = true;
+    const refreshHealth = async () => {
+      try {
+        const [healthResponse, infoResponse] = await Promise.all([
+          fetch("/api/health", { cache: "no-store" }),
+          fetch("/api/api/v1/info", { cache: "no-store" }),
+        ]);
+        if (!healthResponse.ok) throw new Error("Health endpoint unavailable");
+        const snapshot = await healthResponse.json() as HealthSnapshot;
+        const info = infoResponse.ok ? await infoResponse.json() as ApiInfo : null;
+        if (!active) return;
+        setHealth(snapshot);
+        setHealthCheckedAt(new Date());
+        setApiInfo(info);
+        setHealthError(false);
+      } catch {
+        if (active) { setHealth(null); setApiInfo(null); setHealthError(true); }
+      } finally {
+        if (active) setHealthLoading(false);
+      }
+    };
+    void refreshHealth();
+    const timer = window.setInterval(() => { void refreshHealth(); }, 30_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [healthRefresh]);
+  const databaseOnline = health?.database?.connected;
+  const mailBackendOnline = health?.mailcow?.healthy;
+  const controlPlaneReady = health?.productionReady === true && databaseOnline === true && mailBackendOnline === true;
+  const serviceText = (online: boolean | undefined) => online === undefined ? (healthLoading ? "Đang kiểm tra" : "Chưa xác minh") : online ? "Đang hoạt động" : "Không kết nối";
+  const serviceStyle = (online: boolean | undefined) => ({ color: online === true ? "#147d4a" : online === false ? "#b42318" : "#667085" });
   const shown = data.filter(
     (t) =>
       (filter === "Tất cả" || t.status === filter) &&
@@ -150,7 +189,7 @@ function Dashboard() {
         </nav>
         <div className="sidestatus">
           <div className="statusline">
-            <span className="statusdot" /> PRODUCTION SAFE MODE
+            <span className="statusdot" style={{ background: healthLoading ? "#98a2b3" : controlPlaneReady ? "#12b76a" : "#d92d20" }} /> {healthLoading ? "ĐANG KIỂM TRA HẠ TẦNG" : controlPlaneReady ? "PRODUCTION · SẴN SÀNG" : "CẦN KIỂM TRA HẠ TẦNG"}
           </div>
           <p>Database: PostgreSQL</p>
           <p>Mail Adapter: Mailcow</p>
@@ -169,8 +208,8 @@ function Dashboard() {
             30NICE Mail Cloud <span>/</span> {active}
           </div>
           <div className="headerRight">
-            <span className="localpill">
-              <span className="statusdot" /> LIVE · SAFE MODE
+            <span className="localpill" title={health?.environment || (healthError ? "Không đọc được trạng thái API" : "Đang xác minh")}>
+              <span className="statusdot" style={{ background: healthLoading ? "#98a2b3" : controlPlaneReady ? "#12b76a" : "#d92d20" }} /> {healthLoading ? "ĐANG KIỂM TRA" : healthError ? "API KHÔNG KẾT NỐI" : controlPlaneReady ? "LIVE · SẴN SÀNG" : "CÓ CẢNH BÁO"}
             </span>
             <span className="avatar user">PT</span>
           </div>
@@ -179,7 +218,7 @@ function Dashboard() {
           <div className="pagetop">
             <div>
               <div className="eyebrow">
-                MAIL HOSTING PLATFORM <span>·</span> VERSION 0.5.0
+                MAIL HOSTING PLATFORM <span>·</span> VERSION {apiInfo?.version || "—"}
               </div>
               <h1>{active}</h1>
               <p>
@@ -226,80 +265,56 @@ function Dashboard() {
                   <div className="metricTitle">
                     Database <ReceiptText size={19} />
                   </div>
-                  <strong className="label ok">CONNECTED</strong>
-                  <small>API health verified</small>
+                  <strong className="label" style={serviceStyle(databaseOnline)}>{serviceText(databaseOnline).toUpperCase()}</strong>
+                  <small>{healthError ? "Không đọc được API health" : healthLoading ? "Đang kiểm tra kết nối" : health?.database?.configured ? "PostgreSQL đã cấu hình" : "PostgreSQL chưa được cấu hình"}</small>
                 </div>
               </section>
               <section className="twocol">
                 <div className="panel stretch">
                   <div className="sectionTitle">
-                    <div>
-                      <h2>Tổng quan hạ tầng</h2>
-                      <p>Trạng thái production-safe hiện tại</p>
-                    </div>
-                    <span className="mutedpill">LIVE</span>
+                    <div><h2>Tổng quan hạ tầng</h2><p>Kiểm tra trực tiếp từ API, tự làm mới mỗi 30 giây</p></div>
+                    <span className="mutedpill">{healthLoading ? "ĐANG KIỂM TRA" : controlPlaneReady ? "SẴN SÀNG" : "CẦN KIỂM TRA"}</span>
                   </div>
                   <div className="systemRow">
-                    <div className="systemIcon">
-                      <LayoutDashboard size={18} />
-                    </div>
-                    <div>
-                      <b>SaaS Control Plane</b>
-                      <small>Portal + API + PostgreSQL</small>
-                    </div>
-                    <span className="label ok">Online</span>
+                    <div className="systemIcon"><LayoutDashboard size={18} /></div>
+                    <div><b>SaaS Control Plane</b><small>Portal + API</small></div>
+                    <span className="label" style={serviceStyle(healthError ? false : health ? true : undefined)}>{healthError ? "Không kết nối" : serviceText(health ? true : undefined)}</span>
                   </div>
                   <div className="systemRow">
-                    <div className="systemIcon">
-                      <Server size={18} />
-                    </div>
-                    <div>
-                      <b>Mail Backend</b>
-                      <small>Mailcow adapter</small>
-                    </div>
-                    <span className="label ok">Mailcow online</span>
+                    <div className="systemIcon"><ReceiptText size={18} /></div>
+                    <div><b>Cơ sở dữ liệu</b><small>PostgreSQL</small></div>
+                    <span className="label" style={serviceStyle(databaseOnline)}>{serviceText(databaseOnline)}</span>
                   </div>
                   <div className="systemRow">
-                    <div className="systemIcon">
-                      <ShieldCheck size={18} />
-                    </div>
-                    <div>
-                      <b>HTTPS / DNS</b>
-                      <small>mail.30nice.vn</small>
-                    </div>
-                    <span className="label ok">Online</span>
+                    <div className="systemIcon"><Server size={18} /></div>
+                    <div><b>Mail Backend</b><small>{health?.mailcow?.mode === "production" ? "Mailcow production adapter" : "Mailcow adapter"}</small></div>
+                    <span className="label" style={serviceStyle(mailBackendOnline)}>{serviceText(mailBackendOnline)}</span>
+                  </div>
+                  <div className="systemRow">
+                    <div className="systemIcon"><ShieldCheck size={18} /></div>
+                    <div><b>Kết nối portal</b><small>{typeof window !== "undefined" && window.location.protocol === "https:" ? "HTTPS" : "Chưa xác minh HTTPS"}</small></div>
+                    <span className="label" style={serviceStyle(typeof window !== "undefined" && window.location.protocol === "https:")}>{typeof window !== "undefined" && window.location.protocol === "https:" ? "An toàn" : "Chưa an toàn"}</span>
                   </div>
                 </div>
                 <div className="panel stretch">
                   <div className="sectionTitle">
-                    <div>
-                      <h2>Trạng thái phát hành</h2>
-                      <p>Production-safe rollout</p>
-                    </div>
+                    <div><h2>Thông tin phát hành</h2><p>Phiên bản và trạng thái hiện tại</p></div>
                   </div>
-                  <div className="progress">
-                    <div style={{ width: "70%" }} />
+                  <div className="systemRow">
+                    <div className="systemIcon"><Mail size={18} /></div>
+                    <div><b>Phiên bản API</b><small>{apiInfo?.version ? `Release ${apiInfo.version}` : "Chưa đọc được thông tin phiên bản"}</small></div>
+                    <span className="label">{apiInfo?.version || "—"}</span>
                   </div>
-                  <div className="percent">
-                    Control plane <b>70%</b>
+                  <div className="systemRow">
+                    <div className="systemIcon"><ShieldCheck size={18} /></div>
+                    <div><b>Sẵn sàng production</b><small>{health?.productionReady === true ? "API xác nhận adapter production" : healthError ? "Không đọc được trạng thái" : "API chưa xác nhận sẵn sàng"}</small></div>
+                    <span className="label" style={serviceStyle(controlPlaneReady)}>{serviceText(controlPlaneReady)}</span>
                   </div>
-                  <ul className="tasks">
-                    <li>
-                      <CheckCircle2 size={17} /> Tenant persistence
-                    </li>
-                    <li>
-                      <CheckCircle2 size={17} /> Domain verification
-                    </li>
-                    <li>
-                      <CheckCircle2 size={17} /> Mailbox persistence
-                    </li>
-                    <li>
-                      <CheckCircle2 size={17} /> Audit log persistence
-                    </li>
-                    <li>
-                      <CheckCircle2 size={17} /> Mailcow / SMTP adapter
-                    </li>
-                  </ul>
+                  <div className="systemRow">
+                    <div className="systemIcon"><RefreshCw size={18} /></div>
+                    <div><b>Lần kiểm tra gần nhất</b><small>{healthLoading ? "Đang kiểm tra" : healthError ? "Kiểm tra thất bại" : healthCheckedAt?.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) || "Chưa kiểm tra"}</small></div>
+                    <button className="ghost" disabled={healthLoading} onClick={() => { setHealthLoading(true); setHealthRefresh(value => value + 1); }}>Kiểm tra lại</button>
+                  </div>
                 </div>
               </section>
               <section className="panel">
@@ -315,7 +330,8 @@ function Dashboard() {
                     Xem chi tiết <ArrowUpRight size={15} />
                   </button>
                 </div>
-                <CustomerTable data={shown} />
+                {tenantLoadError && <div role="alert" className="empty"><AlertTriangle size={22} /><h3>Không tải được danh sách khách hàng</h3><p>Kiểm tra phiên đăng nhập hoặc kết nối API rồi tải lại trang.</p></div>}
+                {!tenantLoadError && <CustomerTable data={shown} />}
               </section>
             </>
           ) : (
@@ -356,7 +372,8 @@ function Dashboard() {
                       <option>Chờ xác minh</option>
                     </select>
                   </div>
-                  <CustomerTable data={shown} />
+                  {tenantLoadError && <div role="alert" className="empty"><AlertTriangle size={22} /><h3>Không tải được danh sách khách hàng</h3><p>Kiểm tra phiên đăng nhập hoặc kết nối API rồi tải lại trang.</p></div>}
+                  {!tenantLoadError && <CustomerTable data={shown} />}
                 </>
               ) : (
                 <div className="empty">
@@ -371,7 +388,7 @@ function Dashboard() {
             </section>
           )}
           <footer>
-          30NICE MAIL CLOUD · PRODUCTION · MAILCOW CONNECTED
+          {`30NICE MAIL CLOUD · ${healthError ? "API KHÔNG KẾT NỐI" : controlPlaneReady ? "PRODUCTION · SẴN SÀNG" : "CẦN KIỂM TRA"} · MAILCOW ${serviceText(mailBackendOnline).toUpperCase()}`}
           </footer>
         </div>
       </main>
