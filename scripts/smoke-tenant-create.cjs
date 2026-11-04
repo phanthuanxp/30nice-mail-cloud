@@ -25,6 +25,16 @@ async function main() {
     const offline = new Error('storage unavailable');
     const unavailable = new MailCloudService({ query: async () => { throw offline; } }, {});
     await assert.rejects(unavailable.createTenant({ name: 'ABC', slug: 'abc' }), error => error === offline);
+    const beforeMemberWrites = writes.length;
+    for (const input of [
+      { email: 'user@example.com', password: 'valid-password-123', role: 'super_admin' },
+      { email: 'user@example.com', password: 'valid-password-123', role: {} },
+      { email: 42, password: 'valid-password-123' },
+      { email: 'user@example.com', password: [] },
+      { email: 'user@example.com', password: 'x'.repeat(1025) },
+      null,
+    ]) await assert.rejects(service.createMember('tenant-test', input), BadRequestException);
+    assert.equal(writes.length, beforeMemberWrites, 'invalid member roles and credentials must not reach storage');
     console.log('Customer creation checks passed: validation, normalization, duplicate translation, audit attribution and storage failures.');
   } finally {
     if (previous === undefined) delete process.env.DATABASE_URL;
