@@ -4,7 +4,10 @@ const apiTarget = (process.env.API_PROXY_TARGET || 'http://127.0.0.1:3001').repl
 
 const nextConfig: NextConfig = {
   async rewrites() {
-    return [{ source: '/api/api/:path*', destination: `${apiTarget}/api/:path*` }];
+    return [
+      { source: '/api/health', destination: `${apiTarget}/health` },
+      { source: '/api/api/:path*', destination: `${apiTarget}/api/:path*` },
+    ];
   },
 };
 
