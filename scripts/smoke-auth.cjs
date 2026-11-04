@@ -178,7 +178,8 @@ async function main() {
   const nearbyTenantCodes = [totp(tenant.secret, Date.now() - 30_000), totp(tenant.secret), totp(tenant.secret, Date.now() + 30_000)];
   let wrongTenantCode = '000000';
   while (nearbyTenantCodes.includes(wrongTenantCode)) wrongTenantCode = String(Number(wrongTenantCode) + 1).padStart(6, '0');
-  const burstChallenges = await Promise.all(Array.from({ length: 20 }, () => auth.login('member@example.com', 'tenant-user-password', '192.0.2.88')));
+  const burstChallenges = [];
+  for (let index = 0; index < 20; index++) burstChallenges.push(await auth.login('member@example.com', 'tenant-user-password', '192.0.2.88'));
   const burstResults = await Promise.allSettled(burstChallenges.map(challenge => auth.verifyMfa(challenge.challengeToken, wrongTenantCode)));
   assert.equal(burstResults.filter(result => result.status === 'rejected' && result.reason instanceof UnauthorizedException).length, 8, 'only eight simultaneous MFA guesses may pass the shared attempt reservation');
   assert.equal(burstResults.filter(result => result.status === 'rejected' && result.reason instanceof HttpException && result.reason.getStatus() === 429).length, 12, 'excess simultaneous MFA guesses must be rate limited');
