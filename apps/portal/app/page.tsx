@@ -91,21 +91,18 @@ function Dashboard() {
         if (!Array.isArray(items)) throw new Error("Invalid tenant response");
         const enriched = await Promise.all(
           items.map(async (t: Tenant) => {
-            const domains = await fetch(`/api/api/v1/tenants/${t.id}/domains`, {
-              headers: { "x-role": "super_admin" },
-            }).then((r) => r.json());
-            const mailboxes = await fetch(
-              `/api/api/v1/tenants/${t.id}/mailboxes`,
-              { headers: { "x-role": "super_admin" } },
-            ).then((r) => r.json());
+            const [domainResponse, mailboxResponse] = await Promise.all([
+              fetch(`/api/api/v1/tenants/${t.id}/domains`, { headers: { "x-role": "super_admin" } }),
+              fetch(`/api/api/v1/tenants/${t.id}/mailboxes`, { headers: { "x-role": "super_admin" } }),
+            ]);
+            if (!domainResponse.ok || !mailboxResponse.ok) throw new Error("Tenant details unavailable");
+            const [domains, mailboxes] = await Promise.all([domainResponse.json(), mailboxResponse.json()]);
+            if (!Array.isArray(domains) || !Array.isArray(mailboxes)) throw new Error("Invalid tenant details");
             return {
               ...t,
               domain: domains[0]?.domain ?? "Chưa có domain",
               mailboxes: mailboxes.length,
-              status:
-                domains[0]?.status === "verified"
-                  ? "Đã xác minh"
-                  : "Chờ xác minh",
+              status: domains[0]?.status === "verified" ? "Đã xác minh" : "Chờ xác minh",
             };
           }),
         );
