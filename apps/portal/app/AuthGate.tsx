@@ -56,6 +56,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
   function acceptToken(value: string) {
     localStorage.setItem('30nice_session', value);
+    setSessionChecking(true);
     setToken(value);
   }
 
