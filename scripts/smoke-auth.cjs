@@ -191,7 +191,11 @@ async function main() {
 
   const throttledAuth = new AuthService(database);
   for (let i = 0; i < 8; i++) await expectReject(throttledAuth.login('bad@example.com', 'wrong-password', '198.51.100.5'), UnauthorizedException);
-  await assert.rejects(throttledAuth.login('bad@example.com', 'wrong-password', '198.51.100.5'), error => error instanceof HttpException && error.getStatus() === 429);
+  const restartedAuth = new AuthService(database);
+  await assert.rejects(restartedAuth.login('bad@example.com', 'wrong-password', '198.51.100.5'), error => error instanceof HttpException && error.getStatus() === 429, 'login lockout persists across AuthService instances');
+  const loginLimitKeys = [...database.authFailureLimits.keys()].filter(key => key.startsWith('login:'));
+  assert.ok(loginLimitKeys.length > 0);
+  assert.ok(loginLimitKeys.every(key => /^login:[a-f0-9]{64}$/.test(key)), 'persistent login limit keys hash email and IP values');
 
   const writes = [];
   const memberDb = { query: async () => null, transaction: async work => work(async (sql, values = []) => { writes.push({ sql, values }); return sql.includes('pg_advisory_xact_lock') ? [] : [{ id: 'member-id', email: 'other@example.com', role: 'tenant_admin', status: values[2] }]; }) };
