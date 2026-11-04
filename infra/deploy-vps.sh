@@ -54,7 +54,7 @@ pm2 startOrReload infra/ecosystem.config.cjs --update-env
 API_OK=0
 for attempt in {1..30}; do
   if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3013/health -o "$HEALTH_FILE" &&
-    "$NODE" -e 'const fs=require("node:fs"); process.exit(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).status === "ok" ? 0 : 1)' "$HEALTH_FILE"; then
+    "$NODE" "$APP_DIR/scripts/check-production-health.cjs" "$HEALTH_FILE"; then
     API_OK=1
     break
   fi

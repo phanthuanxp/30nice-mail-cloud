@@ -76,5 +76,7 @@ jobs:
       - name: Build customer portal
         run: npm run build
       - name: Check guarded VPS deploy script syntax
-        run: bash -n infra/deploy-vps.sh
+        run: |
+          bash -n infra/deploy-vps.sh
+          node scripts/smoke-production-health.cjs
 
