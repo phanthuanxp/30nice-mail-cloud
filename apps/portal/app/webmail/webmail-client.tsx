@@ -176,6 +176,7 @@ export default function WebmailClient() {
   const [selectedUids, setSelectedUids] = useState<Set<string>>(new Set());
   const messageRequestSequence = useRef(new RequestSequence());
   const foregroundMessageRequest = useRef(0);
+  const readerRequestSequence = useRef(new RequestSequence());
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation | null>(null);
   const [compose, setCompose] = useState<Compose | null>(null);
   const [draftStatus, setDraftStatus] = useState('');
@@ -341,7 +342,7 @@ export default function WebmailClient() {
     messageRequestSequence.current.invalidate();
     foregroundMessageRequest.current = 0;
     setBusy(false);
-    try { await request('/logout', { method: 'POST' }); } finally { setAuthenticated(false); setAccount(''); setItems([]); setSelected(null); setFolders([]); setNotice(''); }
+    try { await request('/logout', { method: 'POST' }); } finally { setAuthenticated(false); setAccount(''); setItems([]); closeReader(); setFolders([]); setNotice(''); }
   }
 
   async function downloadAttachments(uid: number, messageFolder: string, attachments: Message['attachments']) {
@@ -361,7 +362,7 @@ export default function WebmailClient() {
       const cc = data.ccAddresses.map(value => value.address).filter(Boolean).join(', ');
       const bcc = data.bccAddresses.map(value => value.address).filter(Boolean).join(', ');
       setCompose({ draftId: data.draftId || crypto.randomUUID(), replaceUid: item.uid, to: data.to.map(value => value.address).filter(Boolean).join(', '), cc, bcc, subject: data.subject === '(Không có tiêu đề)' ? '' : data.subject, text: data.text, html: data.html, files });
-      setShowCc(Boolean(cc)); setShowBcc(Boolean(bcc)); setSelected(null); setMobileNav(false);
+      setShowCc(Boolean(cc)); setShowBcc(Boolean(bcc)); closeReader(); setMobileNav(false);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không mở được thư nháp.'); }
     finally { setBusy(false); }
   }
@@ -380,25 +381,34 @@ export default function WebmailClient() {
     setCompose(null); setShowCc(false); setShowBcc(false);
   }
 
+  function closeReader() {
+    readerRequestSequence.current.invalidate();
+    setSelected(null);
+    setBusy(false);
+  }
+
   async function openMessage(item: MailItem) {
+    const sequence = readerRequestSequence.current.begin();
     if (item.draft) { await resumeDraft(item); return; }
     setBusy(true); setError('');
     try {
       const messageFolder = item.folder || folder;
       const data = await request(`/messages/${item.uid}?folder=${encodeURIComponent(messageFolder)}`) as Message;
+      if (!readerRequestSequence.current.isCurrent(sequence)) return;
       setSelected(data); setItems(current => current.map(message => messageKey(message) === messageKey(item) ? { ...message, seen: true } : message));
       void loadFolders();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không mở được thư.'); }
-    finally { setBusy(false); }
+    } catch (reason) { if (readerRequestSequence.current.isCurrent(sequence)) setError(reason instanceof Error ? reason.message : 'Không mở được thư.'); }
+    finally { if (readerRequestSequence.current.isCurrent(sequence)) setBusy(false); }
   }
 
   async function showExternalImages(message: Message) {
+    const sequence = readerRequestSequence.current.begin();
     setBusy(true); setError('');
     try {
       const data = await request(`/messages/${message.uid}?folder=${encodeURIComponent(message.folder)}&externalImages=1`) as Message;
-      setSelected(data);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không tải được hình ảnh trong thư.'); }
-    finally { setBusy(false); }
+      if (readerRequestSequence.current.isCurrent(sequence)) setSelected(data);
+    } catch (reason) { if (readerRequestSequence.current.isCurrent(sequence)) setError(reason instanceof Error ? reason.message : 'Không tải được hình ảnh trong thư.'); }
+    finally { if (readerRequestSequence.current.isCurrent(sequence)) setBusy(false); }
   }
 
   useEffect(() => {
@@ -411,7 +421,7 @@ export default function WebmailClient() {
         if (deleteConfirmation) { event.preventDefault(); if (!busy) setDeleteConfirmation(null); }
         else if (compose) { event.preventDefault(); void closeComposer(); }
         else if (activePanel) setActivePanel(null);
-        else if (selected) setSelected(null);
+        else if (selected) closeReader();
         else if (mobileNav) setMobileNav(false);
         return;
       }
@@ -452,14 +462,14 @@ export default function WebmailClient() {
   }
 
   async function deleteMessage(item: MailItem) {
-    try { await request(`/messages/${item.uid}/trash`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder }) }); setSelected(null); await loadMessages(); await loadFolders(); }
+    try { await request(`/messages/${item.uid}/trash`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder }) }); closeReader(); await loadMessages(); await loadFolders(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Không chuyển được thư vào thùng rác.'); }
   }
 
   async function moveMessage(item: MailItem, action: 'archive' | 'inbox') {
     try {
       await request(`/messages/${item.uid}/${action}`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder }) });
-      setSelected(null); setSelectedUids(new Set()); await loadMessages(); await loadFolders();
+      closeReader(); setSelectedUids(new Set()); await loadMessages(); await loadFolders();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không thể di chuyển thư.'); }
   }
 
@@ -486,7 +496,7 @@ export default function WebmailClient() {
     setError(''); setNotice(''); setBusy(true);
     try {
       const result = await processBulk(targets, item => request(`/messages/${item.uid}/delete-permanently`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder }) }));
-      setSelectedUids(new Set()); setSelected(null); await loadMessages(); try { await loadFolders(); } catch { setError('Đã xóa thư nhưng không tải lại được danh sách thư mục.'); }
+      setSelectedUids(new Set()); closeReader(); await loadMessages(); try { await loadFolders(); } catch { setError('Đã xóa thư nhưng không tải lại được danh sách thư mục.'); }
       if (result.failed) {
         const summary = `Đã xóa vĩnh viễn ${result.succeeded}/${targets.length} thư; ${result.failed} thư chưa xóa được.`;
         if (result.succeeded) setNotice(summary); else setError(result.error instanceof Error ? result.error.message : summary);
@@ -499,7 +509,7 @@ export default function WebmailClient() {
     if (!targets.length) return;
     setError(''); setNotice('');
     const result = await processBulk(targets, item => request(`/messages/${item.uid}/${action}`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder }) }));
-    setSelectedUids(new Set()); setSelected(null); await loadMessages(); try { await loadFolders(); } catch { setError('Thư đã được xử lý nhưng không tải lại được danh sách thư mục.'); }
+    setSelectedUids(new Set()); closeReader(); await loadMessages(); try { await loadFolders(); } catch { setError('Thư đã được xử lý nhưng không tải lại được danh sách thư mục.'); }
     const actionLabel = action === 'archive' ? 'lưu trữ' : 'chuyển về Hộp thư đến';
     if (result.failed) {
       const summary = `Đã ${actionLabel} ${result.succeeded}/${targets.length} thư; ${result.failed} thư chưa xử lý được. Danh sách đã được làm mới.`;
@@ -527,7 +537,7 @@ export default function WebmailClient() {
     if (!targets.length) return;
     setError(''); setNotice('');
     const result = await processBulk(targets, item => request(`/messages/${item.uid}/trash`, { method: 'POST', body: JSON.stringify({ folder: item.folder || folder }) }));
-    setSelectedUids(new Set()); setSelected(null); await loadMessages(); try { await loadFolders(); } catch { setError('Thư đã được xử lý nhưng không tải lại được danh sách thư mục.'); }
+    setSelectedUids(new Set()); closeReader(); await loadMessages(); try { await loadFolders(); } catch { setError('Thư đã được xử lý nhưng không tải lại được danh sách thư mục.'); }
     const summary = `Đã chuyển ${result.succeeded}/${targets.length} thư vào Thùng rác; ${result.failed} thư chưa xử lý được. Danh sách đã được làm mới.`;
     if (result.failed) {
       if (result.succeeded) setNotice(summary);
@@ -567,7 +577,7 @@ export default function WebmailClient() {
       }
       setCompose(null); setShowCc(false); setShowBcc(false);
       setNotice(!result.draftRemoved ? 'Đã gửi thư. Bản nháp cũ vẫn còn trong Thư nháp; hãy xóa bản nháp cũ, không gửi lại để tránh gửi trùng.' : result.savedToSent ? 'Đã gửi thư và lưu bản sao trong Đã gửi.' : 'Máy chủ đã gửi thư nhưng chưa lưu được bản sao vào Đã gửi. Không gửi lại để tránh gửi trùng.');
-      const sent = folders.find(item => item.specialUse === '\\Sent'); if (sent) { setPage(1); setFolder(sent.path); setQuery(''); setSearchInput(''); setListFilter('all'); setSelected(null); await loadMessages(sent.path, '', 1, 'all'); try { await loadFolders(); } catch { setNotice('Đã gửi thư. Không tải lại được danh sách thư mục; hãy bấm Làm mới.'); } }
+      const sent = folders.find(item => item.specialUse === '\\Sent'); if (sent) { setPage(1); setFolder(sent.path); setQuery(''); setSearchInput(''); setListFilter('all'); closeReader(); await loadMessages(sent.path, '', 1, 'all'); try { await loadFolders(); } catch { setNotice('Đã gửi thư. Không tải lại được danh sách thư mục; hãy bấm Làm mới.'); } }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không gửi được thư.'); }
     finally { sendingRef.current = false; setBusy(false); }
   }
@@ -590,7 +600,7 @@ export default function WebmailClient() {
     const ccAddresses = replyAll ? [...new Set(message.ccAddresses.map(value => value.address).filter((value): value is string => Boolean(value) && value.toLowerCase() !== own && !toAddresses.includes(value)))] : [];
     setShowCc(ccAddresses.length > 0); setShowBcc(false);
     setCompose({ draftId: crypto.randomUUID(), to: toAddresses.join(', '), cc: ccAddresses.join(', '), bcc: '', subject: /^(re|aw):/i.test(message.subject) ? message.subject : `Re: ${message.subject}`, text: `\n\n────────── Thư gốc ──────────\nTừ: ${person(sender)}\n${message.text.slice(0, 2000)}`, html: plainTextToHtml(`\n\n────────── Thư gốc ──────────\nTừ: ${person(sender)}\n${message.text.slice(0, 2000)}`), files: [] });
-    setSelected(null);
+    closeReader();
   }
 
   async function forwardMessage(message: Message) {
@@ -600,7 +610,7 @@ export default function WebmailClient() {
       const sentAt = message.date ? new Date(message.date).toLocaleString('vi-VN') : 'Không rõ';
       const quoted = `\n\n────────── Thư được chuyển tiếp ──────────\nTừ: ${person(message.from[0])} <${message.from[0]?.address || ''}>\nNgày: ${sentAt}\nChủ đề: ${message.subject}\n\n${message.text.slice(0, 2000)}`;
       setCompose({ draftId: crypto.randomUUID(), to: '', cc: '', bcc: '', subject: /^(fwd?|wg):/i.test(message.subject) ? message.subject : `Fwd: ${message.subject}`, text: quoted, html: plainTextToHtml(quoted), files });
-      setShowCc(false); setShowBcc(false); setSelected(null);
+      setShowCc(false); setShowBcc(false); closeReader();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không thể chuyển tiếp thư.'); }
     finally { setBusy(false); }
   }
@@ -648,7 +658,7 @@ export default function WebmailClient() {
       <aside className={`wm-sidebar ${mobileNav ? 'wm-sidebar-open' : ''}`}>
         <button className="wm-compose-btn" onClick={() => { setCompose(newCompose()); setShowCc(false); setShowBcc(false); setMobileNav(false); }}><PenLine size={19} /> Soạn thư</button>
         <nav className="wm-folder-nav" aria-label="Thư mục">
-          {folders.map(item => { const Icon = FOLDER_ICONS[item.specialUse || ''] || (item.path.toUpperCase() === 'INBOX' ? Inbox : Mail); return <button key={item.path} className={`wm-folder-link ${folder === item.path && !selected && !query ? 'active' : ''}`} onClick={() => { setPage(1); setFolder(item.path); setQuery(''); setSearchInput(''); setSelected(null); setMobileNav(false); }}><Icon size={18} /><span>{folderLabel(item)}</span>{item.unread > 0 && <b>{item.unread}</b>}</button>; })}
+          {folders.map(item => { const Icon = FOLDER_ICONS[item.specialUse || ''] || (item.path.toUpperCase() === 'INBOX' ? Inbox : Mail); return <button key={item.path} className={`wm-folder-link ${folder === item.path && !selected && !query ? 'active' : ''}`} onClick={() => { setPage(1); setFolder(item.path); setQuery(''); setSearchInput(''); closeReader(); setMobileNav(false); }}><Icon size={18} /><span>{folderLabel(item)}</span>{item.unread > 0 && <b>{item.unread}</b>}</button>; })}
         </nav>
         <div className="wm-sidebar-bottom"><div className="wm-storage"><div className="wm-storage-title"><span>Dung lượng hộp thư</span><span><ShieldCheck size={15} /></span></div><small>Dung lượng do quản trị viên thiết lập</small></div><button className="wm-folder-link" onClick={() => setActivePanel('settings')}><Settings size={18} /><span>Cài đặt</span></button><button className="wm-folder-link" onClick={() => setActivePanel('help')}><CircleHelp size={18} /><span>Trợ giúp & phản hồi</span></button></div>
       </aside>
@@ -656,8 +666,8 @@ export default function WebmailClient() {
         {error && <div className="wm-inline-alert"><span>{error}</span><button aria-label="Đóng" onClick={() => setError('')}><X size={16} /></button></div>}{notice && <div className="wm-inline-notice" role="status"><span>{notice}</span><button aria-label="Đóng thông báo" onClick={() => setNotice('')}><X size={16} /></button></div>}
         <section className={`wm-mail-panel ${selected ? 'wm-reading' : ''}`}>
           <div className="wm-toolbar">
-            <div className="wm-toolbar-left">{selected ? <button className="wm-icon-btn" aria-label="Quay lại danh sách" onClick={() => setSelected(null)}><ArrowLeft size={19} /></button> : <><button className="wm-icon-btn" aria-label={allVisibleSelected ? 'Bỏ chọn thư' : 'Chọn tất cả thư'} onClick={() => setSelectedUids(allVisibleSelected ? new Set() : new Set(visibleItems.map(messageKey)))}>{allVisibleSelected ? <CheckSquare size={17} /> : <Square size={17} />}</button><button className="wm-icon-btn" aria-label="Làm mới" onClick={() => void loadMessages()}><RefreshCw size={17} /></button>{selectedUids.size > 0 && <><span className="wm-selected-count">Đã chọn {selectedUids.size}</span><button className="wm-icon-btn" aria-label={selectedAllSeen ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'} title={selectedAllSeen ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'} onClick={() => void bulkUpdate(selectedAllSeen ? 'unseen' : 'seen')}>{selectedAllSeen ? <Mail size={17} /> : <MailOpen size={17} />}</button><button className="wm-icon-btn" aria-label={selectedAllFlagged ? 'Bỏ gắn sao cho thư đã chọn' : 'Gắn sao cho thư đã chọn'} title={selectedAllFlagged ? 'Bỏ gắn sao' : 'Gắn sao'} onClick={() => void bulkUpdate(selectedAllFlagged ? 'unflagged' : 'flagged')}><Star size={17} fill={selectedAllFlagged ? 'currentColor' : 'none'} /></button>{!inArchive && <button className="wm-icon-btn" aria-label={inTrash ? 'Chuyển về Hộp thư đến' : 'Lưu trữ thư đã chọn'} title={inTrash ? 'Chuyển về Hộp thư đến' : 'Lưu trữ'} onClick={() => void bulkMove(inTrash ? 'inbox' : 'archive')}>{inTrash ? <Inbox size={17} /> : <Archive size={17} />}</button>}{inTrash ? <button className="wm-icon-btn" aria-label="Xóa vĩnh viễn thư đã chọn" title="Xóa vĩnh viễn" onClick={() => requestPermanentDelete(selectedItems)}><Trash2 size={17} /></button> : <button className="wm-icon-btn" aria-label="Chuyển vào thùng rác" title="Chuyển vào thùng rác" onClick={() => void bulkDelete()}><Trash2 size={17} /></button>}</>}</>}</div>
-            <div className="wm-toolbar-right">{selected ? <>{inTrash && <button className="wm-icon-btn" title="Xóa vĩnh viễn" aria-label="Xóa vĩnh viễn thư" onClick={() => requestPermanentDelete([selected])}><Trash2 size={18} /></button>}<button className="wm-icon-btn" title="Chuyển tiếp thư" aria-label="Chuyển tiếp thư" onClick={() => void forwardMessage(selected)}><Forward size={18} /></button><button className="wm-icon-btn" title={selected.seen ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'} aria-label={selected.seen ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'} onClick={() => { void updateFlag(selected, selected.seen ? 'unseen' : 'seen'); setSelected(null); }}>{selected.seen ? <Mail size={18} /> : <MailOpen size={18} />}</button>{!inArchive && <button className="wm-icon-btn" title={inTrash ? 'Chuyển về Hộp thư đến' : 'Lưu trữ'} aria-label={inTrash ? 'Chuyển về Hộp thư đến' : 'Lưu trữ'} onClick={() => void moveMessage(selected, inTrash ? 'inbox' : 'archive')}>{inTrash ? <Inbox size={18} /> : <Archive size={18} />}</button>}{!inTrash && <button className="wm-icon-btn" title="Chuyển vào thùng rác" aria-label="Chuyển vào thùng rác" onClick={() => void deleteMessage(selected)}><Trash2 size={18} /></button>}<button className="wm-icon-btn" title="Danh sách thư" aria-label="Danh sách thư" onClick={() => setSelected(null)}><ChevronLeft size={19} /></button></> : <><span>{total ? `${(page - 1) * 50 + 1}–${Math.min(page * 50, total)} / ${total}` : '0 thư'}{unreadCount ? ` · ${unreadCount} chưa đọc` : ''}</span><button className="wm-icon-btn" aria-label="Trang trước" title="Thư mới hơn" disabled={page <= 1 || busy} onClick={() => setPage(value => value - 1)}><ChevronLeft size={19} /></button><button className="wm-icon-btn" aria-label="Trang sau" title="Thư cũ hơn" disabled={page * 50 >= total || busy} onClick={() => setPage(value => value + 1)}><ChevronRight size={19} /></button></>}</div>
+            <div className="wm-toolbar-left">{selected ? <button className="wm-icon-btn" aria-label="Quay lại danh sách" onClick={() => closeReader()}><ArrowLeft size={19} /></button> : <><button className="wm-icon-btn" aria-label={allVisibleSelected ? 'Bỏ chọn thư' : 'Chọn tất cả thư'} onClick={() => setSelectedUids(allVisibleSelected ? new Set() : new Set(visibleItems.map(messageKey)))}>{allVisibleSelected ? <CheckSquare size={17} /> : <Square size={17} />}</button><button className="wm-icon-btn" aria-label="Làm mới" onClick={() => void loadMessages()}><RefreshCw size={17} /></button>{selectedUids.size > 0 && <><span className="wm-selected-count">Đã chọn {selectedUids.size}</span><button className="wm-icon-btn" aria-label={selectedAllSeen ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'} title={selectedAllSeen ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'} onClick={() => void bulkUpdate(selectedAllSeen ? 'unseen' : 'seen')}>{selectedAllSeen ? <Mail size={17} /> : <MailOpen size={17} />}</button><button className="wm-icon-btn" aria-label={selectedAllFlagged ? 'Bỏ gắn sao cho thư đã chọn' : 'Gắn sao cho thư đã chọn'} title={selectedAllFlagged ? 'Bỏ gắn sao' : 'Gắn sao'} onClick={() => void bulkUpdate(selectedAllFlagged ? 'unflagged' : 'flagged')}><Star size={17} fill={selectedAllFlagged ? 'currentColor' : 'none'} /></button>{!inArchive && <button className="wm-icon-btn" aria-label={inTrash ? 'Chuyển về Hộp thư đến' : 'Lưu trữ thư đã chọn'} title={inTrash ? 'Chuyển về Hộp thư đến' : 'Lưu trữ'} onClick={() => void bulkMove(inTrash ? 'inbox' : 'archive')}>{inTrash ? <Inbox size={17} /> : <Archive size={17} />}</button>}{inTrash ? <button className="wm-icon-btn" aria-label="Xóa vĩnh viễn thư đã chọn" title="Xóa vĩnh viễn" onClick={() => requestPermanentDelete(selectedItems)}><Trash2 size={17} /></button> : <button className="wm-icon-btn" aria-label="Chuyển vào thùng rác" title="Chuyển vào thùng rác" onClick={() => void bulkDelete()}><Trash2 size={17} /></button>}</>}</>}</div>
+            <div className="wm-toolbar-right">{selected ? <>{inTrash && <button className="wm-icon-btn" title="Xóa vĩnh viễn" aria-label="Xóa vĩnh viễn thư" onClick={() => requestPermanentDelete([selected])}><Trash2 size={18} /></button>}<button className="wm-icon-btn" title="Chuyển tiếp thư" aria-label="Chuyển tiếp thư" onClick={() => void forwardMessage(selected)}><Forward size={18} /></button><button className="wm-icon-btn" title={selected.seen ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'} aria-label={selected.seen ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'} onClick={() => { void updateFlag(selected, selected.seen ? 'unseen' : 'seen'); closeReader(); }}>{selected.seen ? <Mail size={18} /> : <MailOpen size={18} />}</button>{!inArchive && <button className="wm-icon-btn" title={inTrash ? 'Chuyển về Hộp thư đến' : 'Lưu trữ'} aria-label={inTrash ? 'Chuyển về Hộp thư đến' : 'Lưu trữ'} onClick={() => void moveMessage(selected, inTrash ? 'inbox' : 'archive')}>{inTrash ? <Inbox size={18} /> : <Archive size={18} />}</button>}{!inTrash && <button className="wm-icon-btn" title="Chuyển vào thùng rác" aria-label="Chuyển vào thùng rác" onClick={() => void deleteMessage(selected)}><Trash2 size={18} /></button>}<button className="wm-icon-btn" title="Danh sách thư" aria-label="Danh sách thư" onClick={() => closeReader()}><ChevronLeft size={19} /></button></> : <><span>{total ? `${(page - 1) * 50 + 1}–${Math.min(page * 50, total)} / ${total}` : '0 thư'}{unreadCount ? ` · ${unreadCount} chưa đọc` : ''}</span><button className="wm-icon-btn" aria-label="Trang trước" title="Thư mới hơn" disabled={page <= 1 || busy} onClick={() => setPage(value => value - 1)}><ChevronLeft size={19} /></button><button className="wm-icon-btn" aria-label="Trang sau" title="Thư cũ hơn" disabled={page * 50 >= total || busy} onClick={() => setPage(value => value + 1)}><ChevronRight size={19} /></button></>}</div>
           </div>
           {selected ? <article className="wm-reader"><div className="wm-reader-title"><h1>{selected.subject}</h1><span className="wm-inbox-tag">{folderLabel(folders.find(item => item.path === selected.folder) || { path: selected.folder, name: selected.folder, specialUse: null, messages: 0, unread: 0 })}</span></div><div className="wm-message-head"><div className="wm-avatar">{initials(person(selected.from[0]))}</div><div className="wm-sender"><b>{person(selected.from[0])}</b><small>{selected.from[0]?.address}{selected.to.length ? ` · đến ${selected.to.map(person).join(', ')}` : ''}</small></div><time>{selected.date ? new Date(selected.date).toLocaleString('vi-VN', { dateStyle: 'medium', timeStyle: 'short' }) : ''}</time><button className="wm-icon-btn" aria-label="Trả lời" onClick={() => replyTo(selected)}><Reply size={18} /></button></div>{selected.cc && <div className="wm-cc-line">CC: {selected.cc}</div>}{selected.bcc && <div className="wm-cc-line">BCC: {selected.bcc}</div>}{selected.hasRemoteImages && !selected.externalImagesVisible && <div className="wm-image-privacy"><div><ShieldCheck size={17} /><span><b>Đã ẩn hình ảnh bên ngoài</b><small>Hình ảnh từ internet có thể tiết lộ hoạt động của bạn.</small></span></div><button type="button" disabled={busy} onClick={() => void showExternalImages(selected)}><ImageIcon size={16} />{busy ? 'Đang tải…' : 'Hiển thị hình ảnh'}</button></div>}<div className="wm-message-body">{selected.html ? <div className="wm-message-html" dangerouslySetInnerHTML={{ __html: selected.html }} /> : <pre>{selected.text || '(Thư không có nội dung văn bản)'}</pre>}</div>{selected.attachments.length > 0 && <div className="wm-attachments"><b>{selected.attachments.length} tệp đính kèm</b><div>{selected.attachments.map(file => <a key={`${file.filename}-${file.index}`} href={`${API}/messages/${selected.uid}/attachments/${file.index}?folder=${encodeURIComponent(selected.folder)}`}><Paperclip size={15} />{file.filename}<small>{formatBytes(file.size)}</small></a>)}</div></div>}<div className="wm-reply-actions"><button className="wm-reply-button" onClick={() => replyTo(selected)}><Reply size={17} /> Trả lời</button>{(selected.to.length > 1 || selected.ccAddresses.length > 0) && <button className="wm-reply-button" onClick={() => replyTo(selected, true)}><Reply size={17} /> Trả lời tất cả</button>}</div></article> : <><div className="wm-list-heading"><div><h1>{query ? 'Kết quả tìm kiếm' : folderLabel(folders.find(item => item.path === folder) || { path: folder, name: folder, specialUse: null, messages: 0, unread: 0 })}</h1><p>{query ? `Trong toàn bộ hộp thư: “${query}”` : lastSynced ? `Cập nhật lúc ${lastSynced.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'})}` : 'Tự động cập nhật khi hộp thư đang mở'}</p></div><span className="wm-filter-context">{listFilter === 'unread' ? 'Chưa đọc' : listFilter === 'starred' ? 'Có gắn sao' : 'Tất cả thư'}</span></div><div className="wm-tabs"><button className={listFilter === 'all' ? 'active' : ''} onClick={() => {setPage(1);setListFilter('all');}}><Inbox size={17} /> Tất cả thư</button><button className={listFilter === 'unread' ? 'active' : ''} onClick={() => {setPage(1);setListFilter('unread');}}><MailOpen size={17} /> Chưa đọc</button><button className={listFilter === 'starred' ? 'active' : ''} onClick={() => {setPage(1);setListFilter('starred');}}><Star size={17} /> Có gắn sao</button></div><div className="wm-message-list">{busy && items.length === 0 ? <div className="wm-list-empty">Đang tải thư…</div> : visibleItems.length === 0 ? <div className="wm-empty"><div><Inbox size={31} /></div><h2>{query ? 'Không tìm thấy thư phù hợp' : listFilter !== 'all' ? 'Không có thư phù hợp' : 'Hộp thư đang trống'}</h2><p>{query ? 'Thử tìm bằng tên người gửi hoặc tiêu đề khác.' : listFilter !== 'all' ? 'Chọn bộ lọc khác để xem thư.' : 'Khi có thư mới, thư sẽ xuất hiện tại đây.'}</p></div> : visibleItems.map(item => <div className={`wm-message-row ${item.seen ? '' : 'unread'} ${selectedUids.has(messageKey(item)) ? 'wm-row-selected' : ''}`} key={`${item.folder || folder}-${item.uid}`}>
 <button className="wm-select-btn" aria-label={selectedUids.has(messageKey(item)) ? 'Bỏ chọn thư' : 'Chọn thư'} aria-pressed={selectedUids.has(messageKey(item))} onClick={() => setSelectedUids(current => { const next = new Set(current); const key = messageKey(item); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{selectedUids.has(messageKey(item)) ? <CheckSquare size={17} /> : <Square size={17} />}</button>
