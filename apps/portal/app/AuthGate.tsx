@@ -28,7 +28,11 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     if (!token) return;
     const original = window.fetch;
     window.fetch = (input, init = {}) => {
-      const headers = new Headers(init.headers);
+      const target = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+      if (target.origin !== window.location.origin || !target.pathname.startsWith('/api/api/v1/')) {
+        return original(input, init);
+      }
+      const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined));
       headers.set('Authorization', `Bearer ${token}`);
       return original(input, { ...init, headers });
     };
