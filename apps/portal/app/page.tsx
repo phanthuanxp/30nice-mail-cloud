@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import DomainWizard from "./DomainWizard";
 import AuthGate from "./AuthGate";
+import TenantCreateForm from "./TenantCreateForm";
 import DnsHealthPanel from "./DnsHealthPanel";
 import MemberPanel from "./MemberPanel";
 import MailboxPanel from "./MailboxPanel";
@@ -79,6 +80,7 @@ function Dashboard() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("Tất cả");
   const [data, setData] = useState<Tenant[]>(tenants);
+  const [tenantRefresh, setTenantRefresh] = useState(0);
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
   const [apiInfo, setApiInfo] = useState<ApiInfo | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
@@ -112,7 +114,7 @@ function Dashboard() {
         setTenantLoadError(false);
       })
       .catch(() => { setData([]); setTenantLoadError(true); });
-  }, []);
+  }, [tenantRefresh]);
   useEffect(() => {
     let active = true;
     const refreshHealth = async () => {
@@ -354,6 +356,7 @@ function Dashboard() {
                 <MailboxPanel />
               ) : active === "Khách hàng" ? (
                 <>
+                  <TenantCreateForm onCreated={() => setTenantRefresh(value => value + 1)} />
                   <div className="tools">
                     <div className="search">
                       <Search size={16} />
