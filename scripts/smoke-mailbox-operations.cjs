@@ -10,9 +10,11 @@ async function main() {
   let rollbackTenant = '';
   let failProvisioning = false;
   const provisioningWrites = [];
+  const auditWrites = [];
   const resetCalls = [];
   const database = {
     query: async (sql, values = []) => {
+      if (sql.startsWith('insert into audit_logs')) { auditWrites.push({ sql, values }); return []; }
       if (sql.startsWith('select id::text,domain from domains')) return [{ id: 'domain-id', domain: 'example.test' }];
       if (sql.startsWith('insert into mailboxes')) return [{ id: 'new-mailbox-id', tenantId: values[0], address: values[2], quotaGb: values[3], status: 'active' }];
       if (sql.startsWith('insert into provisioning_jobs')) return [{ id: 'provision-job-id' }];
@@ -49,10 +51,13 @@ async function main() {
   assert.deepEqual(await service.listProvisioningJobs('other-tenant'), [], 'job history is tenant scoped');
   assert.equal(jobsTenant, 'other-tenant');
 
-  const changed = await service.updateMailbox('tenant-id', 'mailbox-id', { quotaGb: 20, status: 'disabled' });
+  const changed = await service.updateMailbox('tenant-id', 'mailbox-id', { quotaGb: 20, status: 'disabled' }, 'admin@example.test');
   assert.equal(changed.quotaGb, 20);
   assert.equal(changed.status, 'disabled');
   assert.equal(stored.quotaGb, 20);
+  assert.equal(auditWrites[0].values[0], 'tenant-id', 'audit event is attached to its tenant');
+  assert.equal(auditWrites[0].values[1], 'admin@example.test', 'audit event records the authenticated actor');
+  assert.ok(auditWrites[0].sql.includes('tenant_id,actor_email'), 'audit insert stores tenant and actor columns');
 
   failMailcow = true;
   await assert.rejects(
