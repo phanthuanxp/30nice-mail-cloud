@@ -35,7 +35,14 @@ class FakeDatabase {
   async query(sql, values = []) {
     if (sql.includes('CREATE TABLE IF NOT EXISTS mfa_credentials')) return [];
     if (sql.includes('SELECT EXISTS (')) return [{ blocked: values[0].some(key => (this.authFailureLimits.get(key)?.count || 0) >= 8) }];
-    if (sql.includes('DELETE FROM auth_failure_limits')) { for (const key of values[0] || []) this.authFailureLimits.delete(key); return []; }
+    if (sql.includes('DELETE FROM auth_failure_limits')) {
+      const previous = this.transactionQueue;
+      let release;
+      this.transactionQueue = new Promise(resolve => { release = resolve; });
+      await previous;
+      try { for (const key of values[0] || []) this.authFailureLimits.delete(key); return []; }
+      finally { release(); }
+    }
     if (sql.includes('SELECT secret_ciphertext')) return this.credentials.has(values[0]) ? [this.credentials.get(values[0])] : [];
     if (sql.includes('INSERT INTO mfa_credentials')) {
       const [accountKey, email, tenantId, secret, counter, hashes] = values;
