@@ -36,7 +36,7 @@ async function main() {
   };
   const mailcow = {
     addMailbox: async () => { if (failProvisioning) throw new Error('Mailcow provisioning failure'); },
-    provisionMailbox: async (...args) => { resetCalls.push(args); },
+    provisionMailbox: async (...args) => { if (failProvisioning) throw new Error('Mailcow provisioning failure'); resetCalls.push(args); },
     editMailbox: async (...args) => {
       if (failMailcow) throw new Error('Mailcow temporarily unavailable');
       resetCalls.push(args);
