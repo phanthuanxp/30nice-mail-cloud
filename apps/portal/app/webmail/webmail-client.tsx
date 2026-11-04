@@ -353,12 +353,14 @@ export default function WebmailClient() {
     }));
   }
 
-  async function resumeDraft(item: MailItem) {
+  async function resumeDraft(item: MailItem, sequence = readerRequestSequence.current.begin()) {
     setBusy(true); setError('');
     try {
       const draftFolder = item.folder || folder;
       const data = await request(`/messages/${item.uid}?folder=${encodeURIComponent(draftFolder)}`) as Message;
+      if (!readerRequestSequence.current.isCurrent(sequence)) return;
       const files = await downloadAttachments(item.uid, draftFolder, data.attachments);
+      if (!readerRequestSequence.current.isCurrent(sequence)) return;
       const cc = data.ccAddresses.map(value => value.address).filter(Boolean).join(', ');
       const bcc = data.bccAddresses.map(value => value.address).filter(Boolean).join(', ');
       setCompose({ draftId: data.draftId || crypto.randomUUID(), replaceUid: item.uid, to: data.to.map(value => value.address).filter(Boolean).join(', '), cc, bcc, subject: data.subject === '(Không có tiêu đề)' ? '' : data.subject, text: data.text, html: data.html, files });
@@ -389,7 +391,7 @@ export default function WebmailClient() {
 
   async function openMessage(item: MailItem) {
     const sequence = readerRequestSequence.current.begin();
-    if (item.draft) { await resumeDraft(item); return; }
+    if (item.draft) { await resumeDraft(item, sequence); return; }
     setBusy(true); setError('');
     try {
       const messageFolder = item.folder || folder;
