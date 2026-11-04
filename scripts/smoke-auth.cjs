@@ -35,7 +35,14 @@ class FakeDatabase {
   async query(sql, values = []) {
     if (sql.includes('CREATE TABLE IF NOT EXISTS mfa_credentials')) return [];
     if (sql.includes('SELECT EXISTS (')) return [{ blocked: values[0].some(key => (this.authFailureLimits.get(key)?.count || 0) >= 8) }];
-    if (sql.includes('DELETE FROM auth_failure_limits')) { for (const key of values[0] || []) this.authFailureLimits.delete(key); return []; }
+    if (sql.includes('DELETE FROM auth_failure_limits')) {
+      const previous = this.transactionQueue;
+      let release;
+      this.transactionQueue = new Promise(resolve => { release = resolve; });
+      await previous;
+      try { for (const key of values[0] || []) this.authFailureLimits.delete(key); return []; }
+      finally { release(); }
+    }
     if (sql.includes('SELECT secret_ciphertext')) return this.credentials.has(values[0]) ? [this.credentials.get(values[0])] : [];
     if (sql.includes('INSERT INTO mfa_credentials')) {
       const [accountKey, email, tenantId, secret, counter, hashes] = values;
@@ -171,7 +178,8 @@ async function main() {
   const nearbyTenantCodes = [totp(tenant.secret, Date.now() - 30_000), totp(tenant.secret), totp(tenant.secret, Date.now() + 30_000)];
   let wrongTenantCode = '000000';
   while (nearbyTenantCodes.includes(wrongTenantCode)) wrongTenantCode = String(Number(wrongTenantCode) + 1).padStart(6, '0');
-  const burstChallenges = await Promise.all(Array.from({ length: 20 }, () => auth.login('member@example.com', 'tenant-user-password', '192.0.2.88')));
+  const burstChallenges = [];
+  for (let index = 0; index < 20; index++) burstChallenges.push(await auth.login('member@example.com', 'tenant-user-password', '192.0.2.88'));
   const burstResults = await Promise.allSettled(burstChallenges.map(challenge => auth.verifyMfa(challenge.challengeToken, wrongTenantCode)));
   assert.equal(burstResults.filter(result => result.status === 'rejected' && result.reason instanceof UnauthorizedException).length, 8, 'only eight simultaneous MFA guesses may pass the shared attempt reservation');
   assert.equal(burstResults.filter(result => result.status === 'rejected' && result.reason instanceof HttpException && result.reason.getStatus() === 429).length, 12, 'excess simultaneous MFA guesses must be rate limited');
@@ -191,7 +199,11 @@ async function main() {
 
   const throttledAuth = new AuthService(database);
   for (let i = 0; i < 8; i++) await expectReject(throttledAuth.login('bad@example.com', 'wrong-password', '198.51.100.5'), UnauthorizedException);
-  await assert.rejects(throttledAuth.login('bad@example.com', 'wrong-password', '198.51.100.5'), error => error instanceof HttpException && error.getStatus() === 429);
+  const restartedAuth = new AuthService(database);
+  await assert.rejects(restartedAuth.login('bad@example.com', 'wrong-password', '198.51.100.5'), error => error instanceof HttpException && error.getStatus() === 429, 'login lockout persists across AuthService instances');
+  const loginLimitKeys = [...database.authFailureLimits.keys()].filter(key => key.startsWith('login:'));
+  assert.ok(loginLimitKeys.length > 0);
+  assert.ok(loginLimitKeys.every(key => /^login:[a-f0-9]{64}$/.test(key)), 'persistent login limit keys hash email and IP values');
 
   const writes = [];
   const memberDb = { query: async () => null, transaction: async work => work(async (sql, values = []) => { writes.push({ sql, values }); return sql.includes('pg_advisory_xact_lock') ? [] : [{ id: 'member-id', email: 'other@example.com', role: 'tenant_admin', status: values[2] }]; }) };
