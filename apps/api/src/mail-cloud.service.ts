@@ -17,7 +17,26 @@ export class MailCloudService {
 
   async listTenants(role?: string,tenantId?: string){if(role!=='super_admin'&&!(role==='tenant_admin'&&tenantId)) throw new ForbiddenException('Super Admin or scoped Tenant Admin role required'); await this.database.ensureSeed(); const rows=await this.database.query<{id:string;name:string;slug:string;created_at:string}>('select id::text,name,slug,created_at::text from tenants where ($1 = \'super_admin\' or id=$2::uuid) order by created_at', [role,tenantId??null]); return rows??(role==='super_admin'?this.tenants:this.tenants.filter(t=>t.id===tenantId));}
   async listAudit(role?: string){if(role!=='super_admin') throw new ForbiddenException('Super Admin role required'); const rows=await this.database.query('select id::text,tenant_id::text as "tenantId",actor_email as "actorEmail",action,resource_type as "resourceType",resource_id as "resourceId",request_id as "requestId",created_at as "createdAt" from audit_logs order by created_at desc limit 100'); return rows??this.audit;}
-  async createTenant(body:{name?:string;slug?:string},actorEmail='system',requestId?:string){if(!body.name||!body.slug) throw new BadRequestException('name and slug are required'); if(this.tenants.some(t=>t.slug===body.slug)) throw new BadRequestException('slug already exists'); const rows=await this.database.query<{id:string;name:string;slug:string;created_at:string}>('insert into tenants(name,slug) values($1,$2) returning id::text,name,slug,created_at::text',[body.name,body.slug]); const tenant=rows?.[0]??{id:`tenant-${Date.now()}`,name:body.name,slug:body.slug,createdAt:new Date().toISOString()}; if(!rows) this.tenants.push(tenant as Tenant); await this.record('tenant.create',tenant.id,tenant.id,actorEmail,requestId); return tenant;}
+  async createTenant(body:{name?:string;slug?:string},actorEmail='system',requestId?:string){
+    const name=typeof body?.name==='string'?body.name.trim():'';
+    const slug=typeof body?.slug==='string'?body.slug.trim().toLowerCase():'';
+    if(!name||name.length>120||!slug||slug.length>64||!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug))
+      throw new BadRequestException('Tên khách hàng từ 1 đến 120 ký tự; mã từ 1 đến 64 ký tự, chỉ gồm chữ thường, số và dấu gạch ngang');
+    if(this.mailcowModeIsProduction()&&!this.databaseReady()) throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng; không thể tạo khách hàng');
+    if(!this.databaseReady()&&this.tenants.some(t=>t.slug===slug)) throw new BadRequestException('Mã khách hàng đã tồn tại');
+    let rows:{id:string;name:string;slug:string;created_at:string}[]|null;
+    try {
+      rows=await this.database.query<{id:string;name:string;slug:string;created_at:string}>('insert into tenants(name,slug) values($1,$2) returning id::text,name,slug,created_at::text',[name,slug]);
+    }catch(error){
+      if((error as {code?:string})?.code==='23505') throw new BadRequestException('Mã khách hàng đã tồn tại');
+      throw error;
+    }
+    const tenant=rows?.[0]??{id:`tenant-${randomBytes(12).toString('hex')}`,name,slug,createdAt:new Date().toISOString()};
+    if(!rows) this.tenants.push(tenant as Tenant);
+    await this.record('tenant.create',tenant.id,tenant.id,actorEmail,requestId);
+    return tenant;
+  }
+
   async assertTenant(tenantId:string,scope?:string){if(scope && scope!==tenantId) throw new ForbiddenException('Cross-tenant access denied'); const rows=await this.database.query<{id:string;status:string}>('select id::text,status from tenants where id=$1::uuid',[tenantId]); if(rows && !rows.length) throw new NotFoundException('Tenant not found'); if(rows?.[0]?.status!=='active') throw new ForbiddenException('Tenant đang tạm ngưng hoạt động'); if(!rows && !this.tenants.some(t=>t.id===tenantId)) throw new NotFoundException('Tenant not found'); return tenantId;}
   async listDomains(tenantId:string){const rows=await this.database.query('select id::text,tenant_id::text as "tenantId",domain,status from domains where tenant_id=$1::uuid order by domain',[tenantId]); return rows??this.domains.filter(d=>d.tenantId===tenantId);}
   async createMember(tenantId:string,body:{email?:string;password?:string;role?:'tenant_admin'|'mailbox_user'},actorEmail='system'){const email=body.email?.trim().toLowerCase();if(!email||!/^\S+@\S+\.\S+$/.test(email)||!body.password||body.password.length<12) throw new BadRequestException('Cần email hợp lệ và mật khẩu tối thiểu 12 ký tự');if(this.mailcowModeIsProduction()&&!this.databaseReady())throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng; không thể tạo thành viên');const role=body.role??'tenant_admin';const salt=randomBytes(16).toString('hex');const hash=`scrypt$${salt}$${scryptSync(body.password,salt,32).toString('hex')}`;const rows=await this.database.query('insert into tenant_members(tenant_id,email,password_hash,role) values($1::uuid,$2,$3,$4) returning id::text,tenant_id::text as "tenantId",email,role,status',[tenantId,email,hash,role]);if(rows){await this.record('member.create',String((rows[0] as {id:string}).id),tenantId,actorEmail);return rows[0];}return {tenantId,email,role,status:'active'};}
