@@ -83,6 +83,8 @@ function Dashboard() {
   const [apiInfo, setApiInfo] = useState<ApiInfo | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
   const [healthError, setHealthError] = useState(false);
+  const [healthCheckedAt, setHealthCheckedAt] = useState<Date | null>(null);
+  const [healthRefresh, setHealthRefresh] = useState(0);
   const [tenantLoadError, setTenantLoadError] = useState(false);
   useEffect(() => {
     fetch("/api/api/v1/tenants", { headers: { "x-role": "super_admin" } })
@@ -124,6 +126,7 @@ function Dashboard() {
         const info = infoResponse.ok ? await infoResponse.json() as ApiInfo : null;
         if (!active) return;
         setHealth(snapshot);
+        setHealthCheckedAt(new Date());
         setApiInfo(info);
         setHealthError(false);
       } catch {
@@ -135,7 +138,7 @@ function Dashboard() {
     void refreshHealth();
     const timer = window.setInterval(() => { void refreshHealth(); }, 30_000);
     return () => { active = false; window.clearInterval(timer); };
-  }, []);
+  }, [healthRefresh]);
   const databaseOnline = health?.database?.connected;
   const mailBackendOnline = health?.mailcow?.healthy;
   const controlPlaneReady = health?.productionReady === true && databaseOnline === true && mailBackendOnline === true;
@@ -309,8 +312,8 @@ function Dashboard() {
                   </div>
                   <div className="systemRow">
                     <div className="systemIcon"><RefreshCw size={18} /></div>
-                    <div><b>Lần kiểm tra gần nhất</b><small>{healthLoading ? "Đang kiểm tra" : healthError ? "Kiểm tra thất bại" : new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small></div>
-                    <button className="ghost" onClick={() => { setHealthLoading(true); setHealthError(false); void fetch("/api/health", { cache: "no-store" }).then(async response => { if (!response.ok) throw new Error(); const snapshot = await response.json() as HealthSnapshot; setHealth(snapshot); setHealthError(false); }).catch(() => { setHealth(null); setHealthError(true); }).finally(() => setHealthLoading(false)); }}>Kiểm tra lại</button>
+                    <div><b>Lần kiểm tra gần nhất</b><small>{healthLoading ? "Đang kiểm tra" : healthError ? "Kiểm tra thất bại" : healthCheckedAt?.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) || "Chưa kiểm tra"}</small></div>
+                    <button className="ghost" disabled={healthLoading} onClick={() => { setHealthLoading(true); setHealthRefresh(value => value + 1); }}>Kiểm tra lại</button>
                   </div>
                 </div>
               </section>
