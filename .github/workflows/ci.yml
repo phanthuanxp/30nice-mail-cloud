@@ -78,5 +78,8 @@ jobs:
       - name: Check guarded VPS deploy script syntax
         run: |
           bash -n infra/deploy-vps.sh
+          bash -n infra/mailcloud-backup.sh
+          bash -n infra/mailcow-sync-tls.sh
+          node --check scripts/migrate.cjs
           node scripts/smoke-production-health.cjs
 
