@@ -187,6 +187,50 @@ export class MailCloudService {
     await this.record('mailbox.password_reset',id,tenantId,actorEmail);
     return {address:existing.address,temporaryPassword};
   }
+
+  async listAliases(tenantId:string){
+    return await this.database.query('select id::text,source,destination,active,created_at as "createdAt" from aliases where tenant_id=$1::uuid order by source',[tenantId])??[];
+  }
+  async createAlias(tenantId:string,body:{source?:unknown;destination?:unknown},actorEmail='system'){
+    const source=typeof body?.source==='string'?body.source.trim().toLowerCase():'';
+    const destination=typeof body?.destination==='string'?body.destination.trim().toLowerCase():'';
+    const valid=(value:string)=>value.length<=254&&/^[-a-z0-9._+]+@(?:[a-z0-9-]+\.)+[a-z]{2,63}$/.test(value);
+    if(!valid(source)||!valid(destination)||source===destination)throw new BadRequestException('Cần bí danh và hộp thư nhận hợp lệ, khác nhau');
+    let rows;
+    try{
+      rows=await this.database.transaction(async query=>{
+        await query('select pg_advisory_xact_lock(hashtextextended($1,0))',['alias:'+source]);
+        const domain=await query("select id from domains where tenant_id=$1::uuid and domain=$2 and status='verified'",[tenantId,source.split('@')[1]]);
+        const target=await query("select id from mailboxes where tenant_id=$1::uuid and address=$2 and status='active'",[tenantId,destination]);
+        if(!domain.length||!target.length)throw new BadRequestException('Tên miền phải được xác minh và hộp thư nhận phải thuộc khách hàng này, đang hoạt động');
+        const collision=await query('select id from mailboxes where address=$1 union all select id from aliases where source=$1',[source]);
+        if(collision.length)throw new BadRequestException('Địa chỉ bí danh đã được sử dụng');
+        await this.mailcow.ensureAlias(source,destination);
+        return query('insert into aliases(tenant_id,source,destination,active) values($1::uuid,$2,$3,true) returning id::text,source,destination,active',[tenantId,source,destination]);
+      });
+    }catch(error){
+      if((error as {code?:string})?.code==='23505')throw new BadRequestException('Địa chỉ bí danh đã được sử dụng');
+      if(error instanceof BadRequestException)throw error;
+      throw new BadRequestException('Không thể đồng bộ bí danh. Hãy kiểm tra Mailcow rồi thử lại; hệ thống sẽ đối chiếu yêu cầu trước đó.');
+    }
+    if(!rows?.[0])throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng');
+    await this.record('alias.create',String(rows[0].id),tenantId,actorEmail);
+    return rows[0];
+  }
+  async updateAliasActive(tenantId:string,id:string,active:unknown,actorEmail='system'){
+    if(typeof active!=='boolean')throw new BadRequestException('Trạng thái bí danh không hợp lệ');
+    const rows=await this.database.transaction(async query=>{
+      const aliases=await query<{id:string;source:string;destination:string}>('select id::text,source,destination from aliases where id=$1::uuid and tenant_id=$2::uuid for update',[id,tenantId]);
+      const alias=aliases[0];if(!alias)throw new NotFoundException('Không tìm thấy bí danh của khách hàng');
+      const target=await query("select id from mailboxes where tenant_id=$1::uuid and address=$2 and status='active'",[tenantId,alias.destination]);
+      if(active&&!target.length)throw new BadRequestException('Hộp thư nhận không còn hoạt động');
+      try{await this.mailcow.setAliasActive(alias.source,alias.destination,active);}catch{throw new BadRequestException('Không thể cập nhật trạng thái trên Mailcow; hãy thử lại');}
+      return query('update aliases set active=$3 where id=$1::uuid and tenant_id=$2::uuid returning id::text,source,destination,active',[id,tenantId,active]);
+    });
+    if(!rows?.[0])throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng');
+    await this.record(active?'alias.enable':'alias.disable',id,tenantId,actorEmail);
+    return rows[0];
+  }
   private async record(action:string,resourceId:string,tenantId?:string,actorEmail?:string,requestId?:string){this.audit.push({action,resourceId,tenantId:tenantId??'',actorEmail:actorEmail??'',requestId:requestId??'',createdAt:new Date().toISOString()}); await this.database.query('insert into audit_logs(tenant_id,actor_email,action,resource_type,resource_id,request_id) values($1::uuid,$2,$3,$4,$5,$6)',[tenantId??null,actorEmail??null,action,action.split('.')[0],resourceId,requestId??null]).catch(()=>undefined);}
   databaseStatus(){return this.database.status();}
 }
