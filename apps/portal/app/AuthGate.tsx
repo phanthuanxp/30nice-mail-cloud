@@ -10,8 +10,9 @@ type SetupResponse = { secret: string; issuer: string; account: string; otpauthU
 const API = '/api/api/v1/auth';
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => typeof window === 'undefined' ? null : localStorage.getItem('30nice_session'));
-  const [sessionChecking, setSessionChecking] = useState(() => typeof window !== 'undefined' && Boolean(localStorage.getItem('30nice_session')));
+  const [token, setToken] = useState<string | null>(null);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
+  const [sessionChecking, setSessionChecking] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [step, setStep] = useState<Step>('password');
@@ -23,6 +24,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [recoverySaved, setRecoverySaved] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let stored: string | null = null;
+    try { stored = localStorage.getItem('30nice_session'); } catch { /* Storage may be unavailable. */ }
+    setToken(stored);
+    setSessionChecking(Boolean(stored));
+    setSessionLoaded(true);
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -40,6 +49,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   }, [token]);
 
   useEffect(() => {
+    if (!sessionLoaded) return;
     if (!token) { setSessionChecking(false); return; }
     let active = true;
     void fetch(`${API}/mfa/status`, { headers: { Authorization: `Bearer ${token}` } }).then(response => {
@@ -49,7 +59,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       }
     }).catch(() => undefined).finally(() => { if (active) setSessionChecking(false); });
     return () => { active = false; };
-  }, [token]);
+  }, [token, sessionLoaded]);
 
   async function post<T>(path: string, body: unknown): Promise<T> {
     const response = await fetch(`${API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -105,7 +115,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     if (pendingToken) acceptToken(pendingToken);
   }
 
-  if (token && sessionChecking) return <main className="authShell"><section className="authCard"><div className="authLogo">30</div><p className="authEyebrow">30NICE MAIL CLOUD</p><h1>Đang kiểm tra phiên</h1><p className="authSub">Đang xác minh trạng thái đăng nhập an toàn…</p></section></main>;
+  if (!sessionLoaded || (token && sessionChecking)) return <main className="authShell"><section className="authCard"><div className="authLogo">30</div><p className="authEyebrow">30NICE MAIL CLOUD</p><h1>Đang kiểm tra phiên</h1><p className="authSub">Đang xác minh trạng thái đăng nhập an toàn…</p></section></main>;
   if (token) return <>{children}</>;
 
   return <main className="authShell"><section className="authCard">

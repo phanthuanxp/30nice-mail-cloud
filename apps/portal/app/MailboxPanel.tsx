@@ -8,7 +8,7 @@ type Tenant = { id: string; name: string };
 type Mailbox = { id: string; address: string; quotaGb: number; status: 'active' | 'disabled' };
 type ProvisioningJob = { id: string; tenantId: string; idempotencyKey: string; jobType: string; status: string; attempts: number; lastError: string | null; createdAt: string; updatedAt: string };
 
-export default function MailboxPanel() {
+export default function MailboxPanel({ fixedTenantId }: { fixedTenantId?: string } = {}) {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [tenant, setTenant] = useState('');
   const [items, setItems] = useState<Mailbox[]>([]);
@@ -65,12 +65,12 @@ export default function MailboxPanel() {
     fetch('/api/api/v1/tenants').then(async response => {
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || 'Không tải được danh sách khách hàng.');
-      if (!cancelled) { setTenants(result); if (result[0]) setTenant(result[0].id); }
+      if (!cancelled) { setTenants(result); setTenant(fixedTenantId ? (result.find((item:Tenant)=>item.id===fixedTenantId)?.id || '') : (result[0]?.id || '')); }
     }).catch(reason => {
       if (!cancelled) { setMessage(reason instanceof Error ? reason.message : 'Không tải được danh sách khách hàng.'); setMessageIsError(true); }
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [fixedTenantId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -138,7 +138,7 @@ export default function MailboxPanel() {
 
   return <div className="mailboxPanel">
     <div className="mailboxToolbar">
-      <select aria-label="Chọn khách hàng" value={tenant} onChange={event => setTenant(event.target.value)}>
+      <select aria-label="Chọn khách hàng" disabled={Boolean(fixedTenantId)} value={tenant} onChange={event => setTenant(event.target.value)}>
         <option value="">Chọn khách hàng</option>{tenants.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select>
       <button className="ghost" onClick={() => void Promise.all([load(), loadJobs()])} disabled={loading || Boolean(savingId)}><RefreshCw size={14} /> Làm mới</button>
