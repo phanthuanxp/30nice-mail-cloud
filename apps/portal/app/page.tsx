@@ -427,7 +427,7 @@ function CustomerTable({ data }: { data: typeof tenants }) {
         </thead>
         <tbody>
           {data.map((t, i) => (
-            <tr key={t.domain}>
+            <tr key={t.id}>
               <td>
                 <div className="customer">
                   <span className="customerIcon">
