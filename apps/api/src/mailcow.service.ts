@@ -59,5 +59,31 @@ export class MailcowService {
     }
   }
   async editMailbox(address:string,quotaGb?:number,status?:'active'|'disabled',password?:string){return this.request('/api/v1/edit/mailbox',{username:address,quota:quotaGb===undefined?undefined:quotaGb*1024,active:status===undefined?undefined:status==='disabled'?0:1,password,password2:password});}
+  private async findAlias(address:string,destination:string){
+    if(this.mode!=='production') return null;
+    if(!this.baseUrl||!this.apiKey) throw new Error('Mailcow API is not configured');
+    const response=await fetch(`${this.baseUrl}/api/v1/get/alias/all`,{headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(10000)});
+    if(!response.ok) throw new Error('Không đọc được danh sách bí danh từ Mailcow');
+    const rows=await response.json();
+    if(!Array.isArray(rows)) throw new Error('Mailcow trả danh sách bí danh không hợp lệ');
+    const row=rows.find((item:{address?:string})=>item?.address?.toLowerCase()===address.toLowerCase());
+    if(row&&String(row.goto).trim().toLowerCase()!==destination.toLowerCase())
+      throw new Error('Bí danh đã có đích nhận khác trong Mailcow; cần kiểm tra thủ công');
+    if(row&&!/^\d+$/.test(String(row.id))) throw new Error('ID bí danh Mailcow không hợp lệ');
+    return row??null;
+  }
+  async ensureAlias(address:string,destination:string){
+    const existing=await this.findAlias(address,destination);
+    if(existing)return existing;
+    try{return await this.request('/api/v1/add/alias',{address,goto:destination,active:1});}
+    catch(error){const reconciled=await this.findAlias(address,destination);if(reconciled)return reconciled;throw error;}
+  }
+  async setAliasActive(address:string,destination:string,active:boolean){
+    if(this.mode!=='production') return [{type:'success',msg:this.mode}];
+    const row=await this.findAlias(address,destination);
+    if(!row)throw new Error('Không tìm thấy bí danh trong Mailcow');
+    return this.request('/api/v1/edit/alias',{items:[String(row.id)],attr:{active:active?1:0}});
+  }
+
 }
 
