@@ -27,6 +27,7 @@ import DnsHealthPanel from "./DnsHealthPanel";
 import MemberPanel from "./MemberPanel";
 import MailboxPanel from "./MailboxPanel";
 import AliasPanel from "./AliasPanel";
+import OnboardingPanel from "./OnboardingPanel";
 type Tenant = {
   id: string;
   name: string;
@@ -42,6 +43,7 @@ const tenants: Tenant[] = [];
 const menus = [
   { label: "Tổng quan", icon: LayoutDashboard },
   { label: "Khách hàng", icon: Building2 },
+  { label: "Thiết lập khách hàng", icon: WandSparkles },
   { label: "Tên miền", icon: Globe2 },
   { label: "Hộp thư", icon: Mail },
   { label: "Bí danh", icon: Mail },
@@ -347,7 +349,9 @@ function Dashboard() {
                 </div>
                 <span className="label ok">API connected</span>
               </div>
-              {active === "Tên miền" ? (
+              {active === "Thiết lập khách hàng" ? (
+                <OnboardingPanel />
+              ) : active === "Tên miền" ? (
                 <>
                   <DomainWizard />
                   <DnsHealthPanel />
