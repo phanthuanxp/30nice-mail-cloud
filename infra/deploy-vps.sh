@@ -49,6 +49,11 @@ cd "$APP_DIR"
 npm ci --no-audit --no-fund
 npm run build:api
 npm run build
+BACKUP_DIR="/opt/30nice-mail-cloud-backups/pre-migration-$(date -u +%Y%m%dT%H%M%SZ)"
+install -d -m 700 "$BACKUP_DIR"
+(umask 077; docker exec mailcloud-postgres-1 pg_dump -U mailcloud -d mailcloud -Fc > "$BACKUP_DIR/database.dump")
+test -s "$BACKUP_DIR/database.dump"
+"$NODE" scripts/migrate.cjs
 pm2 startOrReload infra/ecosystem.config.cjs --update-env
 
 API_OK=0
