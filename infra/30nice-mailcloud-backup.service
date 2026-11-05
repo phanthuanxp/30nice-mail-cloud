@@ -1,0 +1,13 @@
+[Unit]
+Description=30NICE Mail Cloud encrypted offsite backup
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/30nice-mailcloud-backup
+UMask=0077
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=2h
