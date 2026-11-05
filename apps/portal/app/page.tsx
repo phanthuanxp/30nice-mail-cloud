@@ -26,6 +26,7 @@ import TenantCreateForm from "./TenantCreateForm";
 import DnsHealthPanel from "./DnsHealthPanel";
 import MemberPanel from "./MemberPanel";
 import MailboxPanel from "./MailboxPanel";
+import AliasPanel from "./AliasPanel";
 type Tenant = {
   id: string;
   name: string;
@@ -43,6 +44,7 @@ const menus = [
   { label: "Khách hàng", icon: Building2 },
   { label: "Tên miền", icon: Globe2 },
   { label: "Hộp thư", icon: Mail },
+  { label: "Bí danh", icon: Mail },
   { label: "Thành viên", icon: Building2 },
   { label: "Gói dịch vụ", icon: ReceiptText },
   { label: "Máy chủ", icon: Server },
@@ -350,6 +352,8 @@ function Dashboard() {
                   <DomainWizard />
                   <DnsHealthPanel />
                 </>
+              ) : active === "Bí danh" ? (
+                <AliasPanel />
               ) : active === "Thành viên" ? (
                 <MemberPanel />
               ) : active === "Hộp thư" ? (
