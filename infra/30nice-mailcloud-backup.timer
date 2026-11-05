@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily 30NICE Mail Cloud backup at 02:30 Vietnam time
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Asia/Ho_Chi_Minh
+RandomizedDelaySec=5m
+Persistent=true
+Unit=30nice-mailcloud-backup.service
+
+[Install]
+WantedBy=timers.target
