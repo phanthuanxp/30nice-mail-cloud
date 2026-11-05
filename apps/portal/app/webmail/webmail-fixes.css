@@ -28,3 +28,5 @@
   .wm-app.wm-compact .wm-message-row{min-height:78px;padding-top:0;padding-bottom:0}
   .wm-app.wm-compact .wm-message-open{padding-top:8px;padding-bottom:8px;gap:3px 8px}
 }
+
+@media(max-width:720px){.wm-topbar{box-sizing:border-box;width:100%;min-width:0}.wm-search{min-width:0}.wm-search input{width:0}.wm-top-actions{flex:none;margin-left:0}}@media(max-width:500px){.wm-logo>span{display:none}.wm-logo{width:34px;flex:none}}
