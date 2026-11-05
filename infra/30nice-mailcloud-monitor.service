@@ -1,0 +1,11 @@
+[Unit]
+Description=30NICE Mail Cloud operational health checks
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/30nice-mailcloud-monitor
+UMask=0077
+TimeoutStartSec=90
+NoNewPrivileges=true
+PrivateTmp=true
