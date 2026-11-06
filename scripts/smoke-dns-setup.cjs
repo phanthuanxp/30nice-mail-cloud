@@ -16,6 +16,10 @@ async function main(){
  values['_dmarc.example.test']=[['v=DMARC1; p=wrong']];
  checks=await inspectDns('example.test','30nice-token',key,resolver);
  assert.equal(checks.spf.ok,false);assert.equal(checks.dkim.ok,false);assert.equal(checks.dmarc.ok,false);
+ values['customer2026._domainkey.example.test']=[['v=DKIM2; p=QUJDRA==']];
+ checks=await inspectDns('example.test','30nice-token',key,resolver);assert.equal(checks.dkim.ok,false);
+ values['customer2026._domainkey.example.test']=[['v=DKIM1; p=QUJDRA==; p=QUJDRA==']];
+ checks=await inspectDns('example.test','30nice-token',key,resolver);assert.equal(checks.dkim.ok,false);
  values['example.test']=[['v=spf1 include:other.example -all']];
  checks=await inspectDns('example.test','30nice-token',key,resolver);assert.equal(checks.spf.state,'review');
  const timed={...resolver,resolveTxt:async()=>{throw Object.assign(Error('timeout'),{code:'ETIMEOUT'});},resolve6:async()=>['2001:db8::1']};

@@ -8,6 +8,7 @@ export type Dkim={selector:string;value:string};
 export type DnsRecord={id:string;type:string;host:string;value:string;group:'required'|'webmail'|'optional';help:string;priority?:number};
 export type Check={ok:boolean;state:'ok'|'missing'|'review'|'error';message:string;actual:string[]};
 export function tags(value:string){return Object.fromEntries(value.split(';').map(x=>x.trim().split(/=(.*)/s).slice(0,2)).filter(x=>x.length===2).map(([k,v])=>[k.toLowerCase(),v.trim()]));}
+function uniqueTags(value:string){const parts=value.split(';').map(x=>x.trim()).filter(Boolean);const names=parts.map(x=>x.split('=')[0].trim().toLowerCase());return parts.every(x=>/^[a-z][a-z0-9_]*\s*=/i.test(x))&&new Set(names).size===names.length;}
 export function recordsFor(domain:string,token:string|null,dkim:Dkim|null):DnsRecord[]{
  return [
   ...(token?[{id:'ownership',type:'TXT',host:'_30nice-verification',value:token,group:'required' as const,help:'Xác minh quyền sở hữu tên miền. Giữ bản ghi này sau khi xác minh.'}]:[]),
@@ -37,9 +38,9 @@ export async function inspectDns(domain:string,token:string|null,dkim:Dkim|null,
  const spfOk=spfs.length===1&&parts.every(x=>allowed.has(x))&&['-all','~all'].includes(parts.at(-1)||'')&&(parts.includes(`ip4:${MAIL_IP}`)||(parts.includes('mx')&&mxOk));
  result('spf',spfOk,spfs,spf.error,spfs.length>1?'Có nhiều bản SPF; cần hợp nhất thành một bản.':'Cần kiểm tra nguồn gửi trong SPF. Không ghi đè nếu còn gửi qua dịch vụ khác.');
  const dms=dm.value.filter(x=>/^v=DMARC1\s*;/i.test(x));
- result('dmarc',dms.length===1&&['none','quarantine','reject'].includes(tags(dms[0]||'').p),dms,dm.error,'Cần một bản DMARC có chính sách p=none, quarantine hoặc reject.');
+ result('dmarc',dms.length===1&&uniqueTags(dms[0])&&['none','quarantine','reject'].includes(tags(dms[0]||'').p),dms,dm.error,'Cần một bản DMARC có chính sách p=none, quarantine hoặc reject.');
  const dks=dk.value.filter(x=>Boolean(tags(x).p));
- result('dkim',Boolean(dkim)&&dks.length===1&&tags(dks[0]).p===tags(dkim!.value).p&&(tags(dks[0]).k||'rsa')==='rsa',dk.value,dk.error,dkim?'DKIM chưa khớp khóa đang dùng; sao chép đầy đủ giá trị bên dưới.':'Chưa đọc được khóa DKIM. Bấm Chuẩn bị DNS sau khi xác minh tên miền.');
+ result('dkim',Boolean(dkim)&&dks.length===1&&uniqueTags(dks[0])&&(!tags(dks[0]).v||tags(dks[0]).v==='DKIM1')&&tags(dks[0]).p===tags(dkim!.value).p&&(tags(dks[0]).k||'rsa')==='rsa',dk.value,dk.error,dkim?'DKIM chưa khớp khóa đang dùng; sao chép đầy đủ giá trị bên dưới.':'Chưa đọc được khóa DKIM. Bấm Chuẩn bị DNS sau khi xác minh tên miền.');
  result('ownership',Boolean(token)&&own.value.includes(token!),own.value,own.error,'Thêm TXT xác minh đúng mã riêng của tên miền.');
  for(const [id,r] of [['autoconfig',auto],['autodiscover',discover]] as const)result(id,Boolean(r.value?.some(x=>x.toLowerCase().replace(/\.$/,'')===MAIL_HOST)),r.value||[],r.error,'Tùy chọn: thêm CNAME về mx.30nice.vn nếu dùng ứng dụng thư.');
  const ips=a.value||[];
