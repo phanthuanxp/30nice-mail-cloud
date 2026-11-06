@@ -47,7 +47,28 @@ export class AuthService {
   private readonly secret = process.env.CONTROL_PLANE_SESSION_SECRET || '';
   private readonly email = process.env.CONTROL_PLANE_ADMIN_EMAIL || '';
   private readonly password = process.env.CONTROL_PLANE_ADMIN_PASSWORD || '';
+  private readonly additionalAdmins = this.loadAdditionalAdmins();
   private mfaSchemaReady?: Promise<boolean>;
+
+  private loadAdditionalAdmins(): { email: string; passwordHash: string }[] {
+    const raw = process.env.CONTROL_PLANE_ADDITIONAL_ADMINS_JSON;
+    if (!raw) return [];
+    try {
+      const entries: unknown = JSON.parse(raw);
+      if (!Array.isArray(entries) || entries.length > 20) throw new Error();
+      const seen = new Set([this.email.trim().toLowerCase()]);
+      return entries.map(entry => {
+        if (!entry || typeof entry.email !== 'string' || typeof entry.passwordHash !== 'string') throw new Error();
+        const email = entry.email.trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 320 || seen.has(email) ||
+            !/^scrypt\$[a-f0-9]{32}\$[a-f0-9]{64}$/i.test(entry.passwordHash)) throw new Error();
+        seen.add(email);
+        return { email, passwordHash: entry.passwordHash };
+      });
+    } catch {
+      throw new Error('Invalid additional administrator configuration');
+    }
+  }
   private lastMfaLimitCleanup = 0;
 
   private encode(value: string) { return Buffer.from(value).toString('base64url'); }
@@ -202,6 +223,8 @@ export class AuthService {
     let identity: Identity | undefined;
     if (this.secret && this.email && this.password && this.equal(email, this.email.trim().toLowerCase()) && this.equal(password, this.password)) {
       identity = { accountKey: `admin:${this.email.trim().toLowerCase()}`, sub: this.email, role: 'super_admin' };
+    } else if (this.secret && this.additionalAdmins.some(admin => this.equal(email, admin.email) && this.verifyPassword(password, admin.passwordHash))) {
+      identity = { accountKey: `admin:${email}`, sub: email, role: 'super_admin' };
     } else {
       const rows = await this.database.query<{ id: string; email: string; role: 'tenant_admin' | 'mailbox_user'; tenant_id: string; password_hash: string }>(
         'select m.id::text as id,m.email,m.role,m.tenant_id::text as tenant_id,m.password_hash from tenant_members m join tenants t on t.id=m.tenant_id where lower(m.email)=lower($1) and m.status=\'active\' and t.status=\'active\' limit 1', [email]);
