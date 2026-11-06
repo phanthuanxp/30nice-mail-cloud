@@ -62,6 +62,8 @@ jobs:
           npm run test:domain
           node scripts/smoke-tenant-create.cjs
           node scripts/smoke-alias.cjs
+          node scripts/smoke-dns-setup.cjs
+          python3 scripts/smoke-webmail-activation.py
       - name: Verify Mailcow adapter
         run: npm run test:mailcow
       - name: Verify webmail features

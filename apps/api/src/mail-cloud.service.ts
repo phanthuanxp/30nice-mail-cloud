@@ -2,9 +2,13 @@ import {BadRequestException,ForbiddenException,Injectable,NotFoundException} fro
 import {DatabaseService} from './database.service';
 import {MailcowService} from './mailcow.service';
 import {promises as dns} from 'node:dns';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {readFile} from 'node:fs/promises';
+import {checkWebmailTls,inspectDns,recordsFor,validDomain} from './dns-setup';
 import {randomBytes,randomInt,scryptSync} from 'node:crypto';
 type Tenant={id:string;name:string;slug:string;createdAt:string};
-type Domain={id:string;tenantId:string;domain:string;status:'pending'|'verified'};
+type Domain={id:string;tenantId:string;domain:string;status:'pending'|'verified';verification_token?:string};
 type Mailbox={id:string;tenantId:string;address:string;quotaGb:number;status:'active'|'disabled'};
 
 @Injectable()
@@ -42,7 +46,48 @@ export class MailCloudService {
   async createMember(tenantId:string,body:{email?:string;password?:string;role?:'tenant_admin'|'mailbox_user'},actorEmail='system'){const email=typeof body?.email==='string'?body.email.trim().toLowerCase():'';if(body?.role!==undefined&&body.role!=='tenant_admin'&&body.role!=='mailbox_user')throw new BadRequestException('Vai trò thành viên không hợp lệ');if(!email||email.length>320||!/^\S+@\S+\.\S+$/.test(email)||typeof body?.password!=='string'||body.password.length<12||body.password.length>1024) throw new BadRequestException('Cần email hợp lệ và mật khẩu tối thiểu 12 ký tự');if(this.mailcowModeIsProduction()&&!this.databaseReady())throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng; không thể tạo thành viên');const role=body.role??'tenant_admin';const salt=randomBytes(16).toString('hex');const hash=`scrypt$${salt}$${scryptSync(body.password,salt,32).toString('hex')}`;const rows=await this.database.query('insert into tenant_members(tenant_id,email,password_hash,role) values($1::uuid,$2,$3,$4) returning id::text,tenant_id::text as "tenantId",email,role,status',[tenantId,email,hash,role]);if(rows){await this.record('member.create',String((rows[0] as {id:string}).id),tenantId,actorEmail);return rows[0];}return {tenantId,email,role,status:'active'};}
   async listMembers(tenantId:string){return await this.database.query('select id::text,email,role,status,created_at as "createdAt" from tenant_members where tenant_id=$1::uuid order by email',[tenantId])??[];}
   async updateMemberStatus(tenantId:string,memberId:string,status:'active'|'disabled',actorEmail:string){const rows=await this.database.transaction(async query=>{await query('select pg_advisory_xact_lock(hashtextextended($1,0))',[tenantId]);return query(`update tenant_members m set status=$3 where m.id=$1::uuid and m.tenant_id=$2::uuid and ($3='active' or lower(m.email)<>lower($4)) and ($3='active' or m.role<>'tenant_admin' or (select count(*) from tenant_members active where active.tenant_id=m.tenant_id and active.role='tenant_admin' and active.status='active')>1) returning m.id::text,email,role,status`,[memberId,tenantId,status,actorEmail]);});if(!rows?.[0])throw new BadRequestException('Không thể cập nhật thành viên. Hãy kiểm tra tenant, quyền quản trị và bảo đảm tenant còn ít nhất một quản trị viên hoạt động.');await this.record(status==='disabled'?'member.disable':'member.enable',memberId,tenantId,actorEmail);return rows[0];}
-  async dnsHealth(tenantId:string,domainId:string){const domains=await this.listDomains(tenantId);const domain=domains.find((item:{id?:string;domain?:string})=>item.id===domainId);if(!domain) throw new NotFoundException('Domain not found');const name=domain.domain as string;const read=async(fn:()=>Promise<unknown>)=>{try{return {ok:true,value:await fn()};}catch{return {ok:false,value:null};}};const [mx,txt,cname]=await Promise.all([read(()=>dns.resolveMx(name)),read(()=>dns.resolveTxt(name)),read(()=>dns.resolveCname(`autoconfig.${name}`))]);const txtRows=(txt.value as string[][]|null)?.flat()??[];const dmarc=await read(()=>dns.resolveTxt(`_dmarc.${name}`));const dkim=await read(()=>dns.resolveTxt(`dkim._domainkey.${name}`));return {domain:name,checks:{mx:{ok:mx.ok&&((mx.value as Array<{exchange:string}>|null)?.some(item=>item.exchange.replace(/\.$/,'')==='mx.30nice.vn')??false),value:mx.value},spf:{ok:txtRows.some(value=>value.startsWith('v=spf1')),value:txtRows.filter(value=>value.startsWith('v=spf1'))},dmarc:{ok:dmarc.ok&&((dmarc.value as string[][]|null)?.flat().some(value=>value.startsWith('v=DMARC1'))??false),value:dmarc.value},dkim:{ok:dkim.ok&&((dkim.value as string[][]|null)?.flat().some(value=>value.startsWith('v=DKIM1'))??false),value:dkim.value},autoconfig:{ok:cname.ok,value:cname.value}},checkedAt:new Date().toISOString()};}
+  private async domainConfig(tenantId:string,domainId:string){
+    const rows=await this.database.query<{id:string;domain:string;status:string;verification_token:string|null}>('select id::text,domain,status,verification_token from domains where id=$1::uuid and tenant_id=$2::uuid',[domainId,tenantId]);
+    const row=rows?.[0];if(!row||!validDomain(row.domain))throw new NotFoundException('Không tìm thấy tên miền');return row;
+  }
+  async prepareDns(tenantId:string,domainId:string,actorEmail='system'){
+    const row=await this.domainConfig(tenantId,domainId);
+    if(!row.verification_token&&row.status==='pending')await this.database.query("update domains set verification_token=$3 where id=$1::uuid and tenant_id=$2::uuid and coalesce(verification_token,'')=''",[domainId,tenantId,`30nice-${randomBytes(24).toString('base64url')}`]);
+    if(row.status==='verified'){
+      await this.database.transaction(async query=>{await query('select pg_advisory_xact_lock(hashtextextended($1,0))',[`dkim:${row.domain}`]);await this.mailcow.ensureDkim(row.domain);return [];});
+    }
+    await this.record('domain.dns_prepare',domainId,tenantId,actorEmail);
+    return this.dnsHealth(tenantId,domainId);
+  }
+  async dnsHealth(tenantId:string,domainId:string){
+    const row=await this.domainConfig(tenantId,domainId);
+    let dkim=null,dkimError='';try{dkim=await this.mailcow.getDkim(row.domain);}catch{dkimError='Không đọc được DKIM từ Mailcow. Hãy thử lại.';}
+    const checks=await inspectDns(row.domain,row.verification_token,dkim);
+    if(row.status==='verified')checks.ownership={...checks.ownership,ok:true,state:'ok',message:'Quyền sở hữu đã được xác minh'};
+    if(dkimError)checks.dkim={...checks.dkim,ok:false,state:'error',message:dkimError};
+    const host=`mail.${row.domain}`;
+    let activation:{state:string;message:string;updatedAt?:string}={state:'not_started',message:'Chưa kích hoạt HTTPS cho webmail riêng.'};
+    try{const data=JSON.parse(await readFile(`/var/lib/30nice-mailcloud-webmail/${host}.json`,'utf8'));if(['running','ready','failed'].includes(data.state))activation={state:data.state,message:String(data.message||''),updatedAt:data.updatedAt};}catch{}
+    if(activation.state==='running'&&activation.updatedAt&&Date.now()-Date.parse(activation.updatedAt)>600000)activation={...activation,state:'failed',message:'Lượt kích hoạt trước đã hết thời gian. Vui lòng thử lại.'};
+    const tlsReady=checks.webmail.ok&&await checkWebmailTls(host);
+    const ready=tlsReady&&(host==='mail.30nice.vn'||activation.state==='ready');
+    return {domain:row.domain,status:row.status,checks,records:recordsFor(row.domain,row.verification_token,dkim),webmail:{host,url:`https://${host}`,ready,activation},checkedAt:new Date().toISOString()};
+  }
+  async activateWebmail(tenantId:string,domainId:string,actorEmail='system'){
+    const row=await this.domainConfig(tenantId,domainId);
+    if(row.status!=='verified')throw new BadRequestException('Cần xác minh quyền sở hữu trước khi kích hoạt webmail.');
+    if(row.domain==='30nice.vn')return {message:'Webmail 30NICE đã được cấu hình.',accepted:true};
+    try{const previous=JSON.parse(await readFile(`/var/lib/30nice-mailcloud-webmail/mail.${row.domain}.json`,'utf8'));
+      if(previous.state==='ready')return {accepted:true,message:'Webmail đã được kích hoạt. Bấm Kiểm tra để xem trạng thái mới nhất.'};
+      if(Date.now()-Date.parse(previous.updatedAt)<120000)throw new BadRequestException('Yêu cầu trước đang được xử lý hoặc vừa thất bại. Vui lòng chờ hai phút rồi kiểm tra lại.');
+    }catch(error){if(error instanceof BadRequestException)throw error;}
+    const checks=await inspectDns(row.domain,null,null);
+    if(!checks.webmail.ok)throw new BadRequestException(checks.webmail.message);
+    try{await promisify(execFile)('/usr/bin/systemctl',['start','--no-block',`30nice-webmail@${row.domain}.service`],{timeout:10000,maxBuffer:4096});}
+    catch{throw new BadRequestException('Chưa thể khởi chạy kích hoạt webmail. Hãy thử lại hoặc liên hệ quản trị.');}
+    await this.record('domain.webmail_activate',domainId,tenantId,actorEmail);
+    return {accepted:true,message:'Đã tiếp nhận. Hệ thống đang kiểm tra DNS và cấp HTTPS; bấm Kiểm tra sau ít phút.'};
+  }
   async createDomain(tenantId:string,body:{domain?:string},actorEmail='system'){
     if(!body.domain||!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(body.domain)) throw new BadRequestException('Tên miền không hợp lệ');
     if(this.mailcowModeIsProduction()&&!this.databaseReady()) throw new BadRequestException('Cơ sở dữ liệu chưa sẵn sàng; không thể thêm tên miền');
@@ -53,6 +98,10 @@ export class MailCloudService {
     const existing=existingRows?.[0]??(!existingRows?this.domains.find(item=>item.domain===value):undefined);
     if(existing&&existing.tenantId!==tenantId) throw new BadRequestException('Tên miền này đã được một khách hàng khác đăng ký');
     if(existing){
+      if(existing.status==='pending'&&!existing.verification_token){
+        const repaired=await this.database.query<{verification_token:string}>("update domains set verification_token=$3 where id=$1::uuid and tenant_id=$2::uuid and coalesce(verification_token,'')='' returning verification_token",[existing.id,tenantId,`30nice-${randomBytes(24).toString('base64url')}`]);
+        if(repaired?.[0])existing.verification_token=repaired[0].verification_token;
+      }
       try { await this.mailcow.ensureDomain(value); }
       catch(error){ await this.record('domain.provision_retry_failed',existing.id,tenantId,actorEmail); throw new BadRequestException(error instanceof Error?error.message:'Mailcow domain provisioning failed'); }
       await this.record('domain.provision_retry',existing.id,tenantId,actorEmail);

@@ -1,0 +1,9 @@
+[Unit]
+Description=Activate 30NICE customer webmail for %i
+After=network-online.target nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/30nice-webmail-activate %i
+TimeoutStartSec=600
+UMask=0022
