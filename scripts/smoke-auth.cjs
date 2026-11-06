@@ -125,7 +125,7 @@ async function main() {
   const salt = 'test-salt';
   const passwordHash = `scrypt$${salt}$${scryptSync('tenant-user-password', salt, 32).toString('hex')}`;
   const extraSalt = '1234567890abcdef1234567890abcdef';
-  const extraHash = `scrypt${extraSalt}${scryptSync('second-admin-test-password', extraSalt, 32).toString('hex')}`;
+  const extraHash = `scrypt$${extraSalt}$${scryptSync('second-admin-test-password', extraSalt, 32).toString('hex')}`;
   process.env.CONTROL_PLANE_ADDITIONAL_ADMINS_JSON = JSON.stringify([{ email: 'second@example.com', passwordHash: extraHash }]);
   const database = new FakeDatabase();
   database.passwordHash = passwordHash;
