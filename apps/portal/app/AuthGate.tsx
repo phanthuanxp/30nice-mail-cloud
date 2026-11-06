@@ -26,38 +26,20 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    let stored: string | null = null;
-    try { stored = localStorage.getItem('30nice_session'); } catch { /* Storage may be unavailable. */ }
-    setToken(stored);
-    setSessionChecking(Boolean(stored));
-    setSessionLoaded(true);
+    try { localStorage.removeItem('30nice_session'); sessionStorage.removeItem('30nice_mfa_pending_session'); } catch {}
+    setToken('cookie');setSessionChecking(true);setSessionLoaded(true);
   }, []);
-
-  useEffect(() => {
-    if (!token) return;
-    const original = window.fetch;
-    window.fetch = (input, init = {}) => {
-      const target = new URL(input instanceof Request ? input.url : String(input), window.location.href);
-      if (target.origin !== window.location.origin || !target.pathname.startsWith('/api/api/v1/')) {
-        return original(input, init);
-      }
-      const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined));
-      headers.set('Authorization', `Bearer ${token}`);
-      return original(input, { ...init, headers });
-    };
-    return () => { window.fetch = original; };
-  }, [token]);
 
   useEffect(() => {
     if (!sessionLoaded) return;
     if (!token) { setSessionChecking(false); return; }
     let active = true;
-    void fetch(`${API}/mfa/status`, { headers: { Authorization: `Bearer ${token}` } }).then(response => {
+    void fetch(`${API}/mfa/status`, {credentials:'same-origin'}).then(response => {
       if (!active) return;
-      if (response.status === 401) {
+      if (!response.ok) {
         localStorage.removeItem('30nice_session'); setToken(null); setStep('password'); setPassword('');
       }
-    }).catch(() => undefined).finally(() => { if (active) setSessionChecking(false); });
+    }).catch(() => {if(active){setToken(null);setError('Chưa kiểm tra được phiên. Vui lòng đăng nhập lại.');}}).finally(() => { if (active) setSessionChecking(false); });
     return () => { active = false; };
   }, [token, sessionLoaded]);
 
@@ -68,11 +50,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     return result as T;
   }
 
-  function acceptToken(value: string) {
-    localStorage.setItem('30nice_session', value);
-    setSessionChecking(true);
-    setToken(value);
-  }
+  function acceptToken() { setSessionChecking(true);setToken('cookie'); }
 
   async function submitPassword(event: FormEvent) {
     event.preventDefault(); setLoading(true); setError('');
@@ -92,8 +70,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   async function submitMfa(event: FormEvent) {
     event.preventDefault(); setLoading(true); setError('');
     try {
-      const result = await post<{ accessToken: string }>('/mfa/verify', { challengeToken, code });
-      acceptToken(result.accessToken);
+      const result = await post<{ ok: boolean }>('/mfa/verify', { challengeToken, code });
+      acceptToken();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Mã xác thực không hợp lệ'); }
     finally { setLoading(false); }
   }
@@ -101,18 +79,16 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   async function enableMfa(event: FormEvent) {
     event.preventDefault(); setLoading(true); setError('');
     try {
-      const result = await post<{ accessToken: string; recoveryCodes: string[] }>('/mfa/enable', { setupToken, code });
+      const result = await post<{ ok: boolean; recoveryCodes: string[] }>('/mfa/enable', { setupToken, code });
       setRecoveryCodes(result.recoveryCodes); setRecoverySaved(false); setStep('recovery');
-      sessionStorage.setItem('30nice_mfa_pending_session', result.accessToken);
+
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không thể bật xác thực hai bước'); }
     finally { setLoading(false); }
   }
 
   function finishRecoveryStep() {
     if (!recoverySaved) return;
-    const pendingToken = sessionStorage.getItem('30nice_mfa_pending_session');
-    sessionStorage.removeItem('30nice_mfa_pending_session');
-    if (pendingToken) acceptToken(pendingToken);
+    acceptToken();
   }
 
   if (!sessionLoaded || (token && sessionChecking)) return <main className="authShell"><section className="authCard"><div className="authLogo">30</div><p className="authEyebrow">30NICE MAIL CLOUD</p><h1>Đang kiểm tra phiên</h1><p className="authSub">Đang xác minh trạng thái đăng nhập an toàn…</p></section></main>;

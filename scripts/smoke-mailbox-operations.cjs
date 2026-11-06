@@ -1,101 +1,53 @@
-const assert = require('node:assert/strict');
-const { BadRequestException } = require('@nestjs/common');
-const { MailCloudService } = require('../apps/api/dist/mail-cloud.service.js');
-
-async function main() {
-  let stored = { id: 'mailbox-id', tenantId: 'tenant-id', address: 'user@example.test', quotaGb: 5, status: 'active' };
-  let failMailcow = false;
-  let rollbackCount = 0;
-  let jobsTenant = '';
-  let rollbackTenant = '';
-  let failProvisioning = false;
-  const provisioningWrites = [];
-  const auditWrites = [];
-  const resetCalls = [];
-  const database = {
-    query: async (sql, values = []) => {
-      if (sql.startsWith('insert into audit_logs')) { auditWrites.push({ sql, values }); return []; }
-      if (sql.startsWith('select id::text,domain from domains')) return [{ id: 'domain-id', domain: 'example.test' }];
-      if (sql.startsWith('insert into mailboxes')) return [{ id: 'new-mailbox-id', tenantId: values[0], address: values[2], quotaGb: values[3], status: 'active' }];
-      if (sql.startsWith('insert into provisioning_jobs')) return [{ id: 'provision-job-id' }];
-      if (sql.startsWith('update provisioning_jobs set status=\'running\'')) return values[1] === 'tenant-id' ? [{ id: values[0], idempotency_key: 'mailbox:failed@example.test', payload: { quotaGb: 12 } }] : [];
-      if (sql.startsWith('update provisioning_jobs')) { provisioningWrites.push({ sql, values }); return []; }
-      if (sql.startsWith('select id::text,tenant_id::text as "tenantId",idempotency_key')) {
-        jobsTenant = values[0];
-        return values[0] === 'tenant-id' ? [{ id: 'job-id', tenantId: 'tenant-id', idempotencyKey: 'mailbox:user@example.test', jobType: 'mailbox.provision', status: 'succeeded', attempts: 1, lastError: null, createdAt: '2026-10-28T00:00:00Z', updatedAt: '2026-10-28T00:00:01Z' }] : [];
-      }
-      if (sql.startsWith('select address from mailboxes')) return values[0] === stored.id && values[1] === stored.tenantId ? [{ address: stored.address }] : [];
-      if (sql.startsWith('select address,quota_gb')) return [{ address: stored.address, quotaGb: stored.quotaGb, status: stored.status }];
-      if (sql.startsWith('update mailboxes set quota_gb=$3')) {
-        if (values[1] !== stored.tenantId) return [];
-        if (failMailcow && values[2] === 20) { rollbackCount++; rollbackTenant = values[1]; }
-        stored = { ...stored, quotaGb: values[2], status: values[3] };
-        return [{ ...stored }];
-      }
-      return [];
-    },
-    status: async () => ({ configured: true, connected: true }),
-  };
-  const mailcow = {
-    addMailbox: async () => { if (failProvisioning) throw new Error('Mailcow provisioning failure'); },
-    provisionMailbox: async (...args) => { if (failProvisioning) throw new Error('Mailcow provisioning failure'); resetCalls.push(args); },
-    editMailbox: async (...args) => {
-      if (failMailcow) throw new Error('Mailcow temporarily unavailable');
-      resetCalls.push(args);
-    },
-  };
-  const service = new MailCloudService(database, mailcow);
-  const jobs = await service.listProvisioningJobs('tenant-id');
-  assert.equal(jobsTenant, 'tenant-id', 'tenant ID is bound as a SQL parameter');
-  assert.equal(jobs[0].tenantId, 'tenant-id');
-  assert.deepEqual(await service.listProvisioningJobs('other-tenant'), [], 'job history is tenant scoped');
-  assert.equal(jobsTenant, 'other-tenant');
-
-  const changed = await service.updateMailbox('tenant-id', 'mailbox-id', { quotaGb: 20, status: 'disabled' }, 'admin@example.test');
-  assert.equal(changed.quotaGb, 20);
-  assert.equal(changed.status, 'disabled');
-  assert.equal(stored.quotaGb, 20);
-  assert.equal(auditWrites[0].values[0], 'tenant-id', 'audit event is attached to its tenant');
-  assert.equal(auditWrites[0].values[1], 'admin@example.test', 'audit event records the authenticated actor');
-  assert.ok(auditWrites[0].sql.includes('tenant_id,actor_email'), 'audit insert stores tenant and actor columns');
-
-  failMailcow = true;
-  await assert.rejects(
-    service.updateMailbox('tenant-id', 'mailbox-id', { quotaGb: 10, status: 'active' }),
-    error => error instanceof BadRequestException,
-  );
-  assert.equal(stored.quotaGb, 20, 'database quota is restored after Mailcow rejects the update');
-  assert.equal(stored.status, 'disabled', 'database status is restored after Mailcow rejects the update');
-  assert.equal(rollbackCount, 1);
-  assert.equal(rollbackTenant, 'tenant-id', 'mailbox rollback is tenant scoped');
-  failMailcow = false;
-  const reset = await service.resetMailboxPassword('tenant-id', 'mailbox-id');
-  assert.equal(reset.address, stored.address);
-  assert.match(reset.temporaryPassword, /A1!$/);
-  assert.ok(reset.temporaryPassword.length >= 20);
-  assert.deepEqual(resetCalls.at(-1).slice(0, 3), [stored.address, undefined, undefined]);
-  assert.equal(resetCalls.at(-1)[3], reset.temporaryPassword);
-  await assert.rejects(service.resetMailboxPassword('other-tenant', 'mailbox-id'));
-
-  const provisioned = await service.createMailbox('tenant-id', { address: 'new@example.test', quotaGb: 5, password: 'provided-password' });
-  assert.equal(provisioned.address, 'new@example.test');
-  assert.equal(provisioningWrites[0].values[1], 'tenant-id', 'successful job update binds its tenant');
-  assert.ok(provisioningWrites[0].sql.includes('tenant_id=$2::uuid'));
-  failProvisioning = true;
-  await assert.rejects(service.createMailbox('tenant-id', { address: 'failed@example.test', quotaGb: 5, password: 'provided-password' }));
-  assert.equal(provisioningWrites[1].values[1], 'tenant-id', 'failed job update binds its tenant');
-  assert.ok(provisioningWrites[1].sql.includes('tenant_id=$2::uuid'));
-  failProvisioning = false;
-  const retried = await service.retryMailboxProvisioning('tenant-id', 'job-id');
-  assert.equal(retried.address, 'failed@example.test');
-  assert.equal(retried.quotaGb, 12, 'retry restores the original quota from the job payload');
-  assert.equal(retried.provisioningStatus, 'succeeded');
-  assert.equal(resetCalls.at(-1)[0], 'example.test');
-  assert.equal(resetCalls.at(-1)[1], 'failed');
-  assert.equal(resetCalls.at(-1)[2], 12);
-  assert.equal(resetCalls.at(-1)[4], true, 'retry explicitly reconciles an uncertain Mailcow result');
-  await assert.rejects(service.retryMailboxProvisioning('other-tenant', 'job-id'));
-  console.log('Mailbox operations smoke checks passed: tenant-scoped rollback, provisioning state, quota/status updates, and password reset.');
+const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const {Pool}=require('pg');const {randomBytes,createHash,createHmac,scryptSync}=require('node:crypto');
+const {DatabaseService}=require('../apps/api/dist/database.service.js');const {MailboxOperations}=require('../apps/api/dist/mailbox-operations.js');const {reconcile}=require('../apps/api/dist/provisioning-worker.js');const {sealJobSecret,openJobSecret}=require('../apps/api/dist/job-secrets.js');const {WebmailService}=require('../apps/api/dist/webmail.service.js');const {TenantOperations}=require('../apps/api/dist/tenant-operations.js');const {AuthService}=require('../apps/api/dist/auth.service.js');const {NestFactory}=require('@nestjs/core');const {AppModule}=require('../apps/api/dist/app.module.js');const {adminSessionMiddleware}=require('../apps/api/dist/http-security.js');const {MemberInvitations}=require('../apps/api/dist/member-invitations.js');
+async function main(){
+ const url=process.env.TEST_DATABASE_URL;if(!url||!new URL(url).pathname.includes('test'))throw Error('TEST_DATABASE_URL must explicitly select a test database.');
+ const admin=new Pool({connectionString:url});const schema='qa_product_'+randomBytes(6).toString('hex');let db;
+ try{await admin.query('create schema '+schema);const scoped=new URL(url);scoped.searchParams.set('options','-c search_path='+schema+',public');process.env.DATABASE_URL=scoped.toString();process.env.CONTROL_PLANE_SESSION_SECRET='integration-secret-at-least-32-characters';
+ db=new DatabaseService();for(const file of fs.readdirSync(path.join(__dirname,'../infra/db')).filter(f=>/^\d.*\.sql$/.test(f)).sort())await db.query(fs.readFileSync(path.join(__dirname,'../infra/db',file),'utf8'));
+ const [a,b]=await db.query("insert into tenants(name,slug) values('A','a'),('B','b') returning id::text");const [domain]=await db.query("insert into domains(tenant_id,domain,status,provisioning_status) values($1,'example.test','verified','ready') returning id::text",[a.id]);
+ let fail=false,creates=0,edits=0;const remote=new Map();const info={domain_name:'example.test',active:1,max_quota_for_domain:10*1024**3,max_quota_for_mbox:10*1024**3,max_num_mboxes_for_domain:10};
+ const mailcow={getDomain:async d=>d==='example.test'?info:null,getDomains:async()=>[info],getMailboxes:async()=>[...remote.values()],setDomainLimits:async(d,storage,count,max)=>{info.max_quota_for_domain=storage*1024**3;info.max_num_mboxes_for_domain=count;info.max_quota_for_mbox=max*1024**3;},provisionMailbox:async(d,l,q,p)=>{if(fail)throw Error('fixture connection lost');const address=l+'@'+d;if(!remote.has(address)){creates++;remote.set(address,{address,quotaBytes:q*1024**3,usedBytes:0,active:true});}return {reconciled:false};},editMailbox:async(address,q,status,password)=>{if(fail)throw Error('fixture rejected');edits++;const m=remote.get(address);if(q!==undefined)m.quotaBytes=q*1024**3;if(status!==undefined)m.active=status==='active';}};
+ const ops=new MailboxOperations(db,mailcow);
+ await assert.rejects(ops.create(b.id,{address:'no@example.test',quotaGb:1}));
+ const box=await ops.create(a.id,{address:'info@example.test',quotaGb:2});assert.equal(box.provisioningStatus,'queued');assert.equal(creates,0);
+ let job=(await db.query('select * from provisioning_jobs where id=$1',[box.provisioningJobId]))[0];assert.equal(job.secret_ciphertext.includes(box.temporaryPassword),false);assert.equal(JSON.stringify(job.payload).includes(box.temporaryPassword),false);assert.equal(openJobSecret(job.secret_ciphertext,a.id+':info@example.test'),box.temporaryPassword);assert.throws(()=>openJobSecret(job.secret_ciphertext,b.id+':info@example.test'));
+ await ops.processOne();assert.equal(creates,1);assert.equal((await db.query('select provisioning_state from mailboxes where id=$1',[box.id]))[0].provisioning_state,'ready');assert.equal((await db.query('select secret_ciphertext from provisioning_jobs where id=$1',[box.provisioningJobId]))[0].secret_ciphertext,null);
+ const [race1,race2]=await Promise.allSettled([ops.create(a.id,{address:'race@example.test',quotaGb:2}),ops.create(a.id,{address:'race@example.test',quotaGb:2})]);assert.equal([race1,race2].filter(r=>r.status==='fulfilled').length,1);
+ info.max_quota_for_domain=5*1024**3;
+ const concurrent=await Promise.allSettled([ops.create(a.id,{address:'last1@example.test',quotaGb:1}),ops.create(a.id,{address:'last2@example.test',quotaGb:1})]);assert.equal(concurrent.filter(r=>r.status==='fulfilled').length,1,'Only one concurrent reservation fits the quota');
+ await assert.rejects(ops.create(a.id,{address:'overflow@example.test',quotaGb:1}));
+ info.max_quota_for_domain=10*1024**3;
+ fail=true;await assert.rejects(ops.update(a.id,box.id,{quotaGb:3}));assert.equal((await db.query('select quota_gb from mailboxes where id=$1',[box.id]))[0].quota_gb,2,'A rejected provider update leaves desired state unchanged');fail=false;
+ await ops.update(a.id,box.id,{quotaGb:3,status:'disabled'});assert.equal(remote.get('info@example.test').active,false);await ops.update(a.id,box.id,{status:'active'});
+ await assert.rejects(ops.update(b.id,box.id,{status:'disabled'}));
+ const retryJob=(await db.query("insert into provisioning_jobs(tenant_id,idempotency_key,job_type,status,payload) values($1,'mailbox:info@example.test','mailbox.provision','failed',$2) on conflict(idempotency_key) do update set status='failed' returning id::text",[a.id,JSON.stringify({quotaGb:3})]))[0];
+ const before=edits;await ops.retry(a.id,retryJob.id);assert.equal(edits,before,'Retry of an existing mailbox must not reset credentials or edit provider state');await assert.rejects(ops.retry(b.id,retryJob.id));
+ const failedBox=await ops.create(a.id,{address:'fail@example.test',quotaGb:1});await db.query('update provisioning_jobs set attempts=4 where id=$1',[failedBox.provisioningJobId]);
+ await db.query("update provisioning_jobs set next_attempt_at=now()+interval '1 hour' where id<>$1 and status='queued'",[failedBox.provisioningJobId]);fail=true;await ops.processOne();job=(await db.query('select * from provisioning_jobs where id=$1',[failedBox.provisioningJobId]))[0];assert.equal(job.status,'dead_letter');assert.equal(job.secret_ciphertext,null);fail=false;
+ remote.get('info@example.test').quotaBytes=1024**3;await reconcile(db,mailcow);assert.equal((await db.query('select provisioning_state from mailboxes where id=$1',[box.id]))[0].provisioning_state,'reconcile');assert.equal((await db.query('select quota_gb from mailboxes where id=$1',[box.id]))[0].quota_gb,3,'Read-only reconciliation must not overwrite desired quota');
+ process.env.NODE_ENV='production';const token='integration-session-token';const hash=createHash('sha256').update(token).digest('hex');const session={email:'info@example.test',password:'not-a-real-password',expiresAt:Date.now()+60000};await db.query('insert into webmail_sessions(token_hash,email,secret_ciphertext,expires_at) values($1,$2,$3,$4)',[hash,session.email,sealJobSecret(JSON.stringify(session),'webmail:'+hash),new Date(session.expiresAt)]);
+ const first=new WebmailService(db),second=new WebmailService(db);await first.resumeSession(token);await second.resumeSession(token);assert.equal(second.profile(token).email,session.email,'A second API instance resumes the persisted encrypted session');await second.logout(token);await first.resumeSession(token);assert.throws(()=>first.profile(token));
+ const tenantOps=new TenantOperations(db,mailcow);const plan=await tenantOps.createPlan({name:'Business',mailboxLimit:20,storageGb:30,mailboxMaxGb:10});await tenantOps.assignPlan(a.id,plan.id,'admin@test');assert.equal((await db.query('select plan_id::text from tenants where id=$1',[a.id]))[0].plan_id,plan.id);assert.equal(info.max_quota_for_domain,30*1024**3);
+ const small=await tenantOps.createPlan({name:'Too small',mailboxLimit:1,storageGb:1,mailboxMaxGb:1});await assert.rejects(tenantOps.assignPlan(a.id,small.id,'admin@test'));await tenantOps.contact(a.id,{name:'Updated A',contactEmail:'owner@example.test',contactPhone:'0123456789'},'admin@test');assert.equal((await db.query('select contact_email from tenants where id=$1',[a.id]))[0].contact_email,'owner@example.test');
+ process.env.CONTROL_PLANE_ADMIN_EMAIL='admin@example.test';process.env.CONTROL_PLANE_ADMIN_PASSWORD='test-password-strong';const auth=new AuthService(db);const signed=auth.issue({sub:'admin@example.test',role:'super_admin'});assert.equal((await auth.verifyActive('Bearer '+signed.accessToken)).role,'super_admin');await auth.logoutAll('Bearer '+signed.accessToken);await assert.rejects(auth.verifyActive('Bearer '+signed.accessToken));
+ await db.query('insert into webmail_sessions(token_hash,email,secret_ciphertext,expires_at) values($1,$2,$3,$4)',[hash,session.email,sealJobSecret(JSON.stringify(session),'webmail:'+hash),new Date(session.expiresAt)]);await first.resumeSession(token);const pref=await first.savePreferences(token,'<p>Owner</p><script>alert(1)</script><a href="javascript:alert(1)">bad</a>');assert.equal(pref.signatureHtml.includes('<script'),false);assert.equal(pref.signatureHtml.includes('javascript:'),false);assert.equal((await second.resumeSession(token),await second.preferences(token)).signatureHtml,pref.signatureHtml);
+ const crash=await ops.create(a.id,{address:'crash@example.test',quotaGb:1});await db.query("update provisioning_jobs set next_attempt_at=now()+interval '1 hour' where id<>$1 and status='queued'",[crash.provisioningJobId]);
+ await db.query("create function reject_worker_audit() returns trigger language plpgsql as $$ begin if NEW.action='mailbox.provisioned' then raise exception 'fixture transaction failure'; end if; return NEW; end $$; create trigger reject_worker_audit before insert on audit_logs for each row execute function reject_worker_audit();");const createBeforeCrash=creates;await ops.processOne();assert.equal(remote.has('crash@example.test'),true);assert.equal((await db.query('select status from provisioning_jobs where id=$1',[crash.provisioningJobId]))[0].status,'queued');await db.query('drop trigger reject_worker_audit on audit_logs;drop function reject_worker_audit()');await db.query('update provisioning_jobs set next_attempt_at=now() where id=$1',[crash.provisioningJobId]);await ops.processOne();assert.equal(creates,createBeforeCrash+1,'A committed provider result followed by a local transaction failure must not create twice');assert.equal((await db.query('select status from provisioning_jobs where id=$1',[crash.provisioningJobId]))[0].status,'succeeded');
+ const invites=new MemberInvitations(db);const invite=await invites.invite(a.id,'invited@example.test','owner@test');const invitationToken=invite.activationUrl.split('#')[1];assert.equal((await invites.info(invitationToken)).email,'invited@example.test');assert.equal(JSON.stringify(await invites.list(a.id)).includes(invitationToken),false);assert.equal((await invites.list(b.id)).length,0);
+ await invites.accept(invitationToken,'InvitationPassword123!');await assert.rejects(invites.accept(invitationToken,'ChangedPassword123!'));const invited=(await db.query("select tenant_id::text,role from tenant_members where email='invited@example.test'"))[0];assert.equal(invited.tenant_id,a.id);assert.equal(invited.role,'tenant_admin');await assert.rejects(invites.createMember(b.id,{email:'invited@example.test',password:'AnotherPassword123!'}));
+ const revoked=await invites.invite(a.id,'revoked@example.test','owner@test');await invites.revoke(a.id,revoked.id,'owner@test');await assert.rejects(invites.info(revoked.activationUrl.split('#')[1]));
+ const expired=await invites.invite(a.id,'expired@example.test','owner@test');await db.query("update member_invitations set expires_at=now()-interval '1 second' where id=$1",[expired.id]);await assert.rejects(invites.accept(expired.activationUrl.split('#')[1],'InvitationPassword123!'));
+ const managerPassword='ManagerFixturePassword123!';const managerHash='scrypt$fixture-salt$'+scryptSync(managerPassword,'fixture-salt',32).toString('hex');
+ const member=(await db.query("insert into tenant_members(tenant_id,email,role,password_hash) values($1,'manager@example.test','tenant_admin',$2) returning id",[a.id,managerHash]))[0];const tenantToken=auth.issue({sub:'manager@example.test',role:'tenant_admin',tenantId:a.id}).accessToken;
+ const app=await NestFactory.create(AppModule,{logger:false});try{app.use('/api/v1',adminSessionMiddleware);await app.listen(0,'127.0.0.1');const origin=await app.getUrl();const call=(method,path,body)=>fetch(origin+path,{method,headers:{Authorization:'Bearer '+tenantToken,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+ assert.equal((await fetch(origin+'/api/v1/auth/me',{headers:{Cookie:'30nice_admin='+tenantToken,Origin:'https://evil.example'}})).status,403);assert.equal((await fetch(origin+'/api/v1/auth/me',{headers:{Cookie:'30nice_admin='+tenantToken,Origin:origin}})).status,200);
+ assert.equal((await call('GET','/api/v1/tenants/'+b.id+'/mailboxes')).status,403);assert.equal((await call('POST','/api/v1/plans',{name:'Unauthorized',mailboxLimit:10,storageGb:10,mailboxMaxGb:5})).status,403);assert.equal((await call('POST','/api/v1/tenants/'+a.id+'/members',{email:'elevate@example.test',password:'FixturePassword123!',role:'super_admin'})).status,400);assert.equal((await call('GET','/api/v1/tenants/'+a.id+'/onboarding')).status,200);
+ const post=(path,body)=>fetch(origin+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const step=await (await post('/api/v1/auth/login',{email:'manager@example.test',password:managerPassword})).json();assert.equal(step.mfaSetupRequired,true);const setup=await(await post('/api/v1/auth/mfa/setup',{setupToken:step.setupToken})).json();
+ let bits='';for(const c of setup.secret)bits+='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'.indexOf(c).toString(2).padStart(5,'0');const key=Buffer.from((bits.match(/.{8}/g)||[]).map(b=>parseInt(b,2)));const counter=Buffer.alloc(8);counter.writeBigUInt64BE(BigInt(Math.floor(Date.now()/30000)));const digest=createHmac('sha1',key).update(counter).digest(),offset=digest[digest.length-1]&15;const code=String((digest.readUInt32BE(offset)&0x7fffffff)%1000000).padStart(6,'0');
+ const enabled=await post('/api/v1/auth/mfa/enable',{setupToken:step.setupToken,code});assert.equal(enabled.status,201);const body=await enabled.json();assert.equal(body.ok,true);assert.equal(body.accessToken,undefined,'HTTP must not expose admin bearer credentials');const cookie=enabled.headers.get('set-cookie');assert.match(cookie,/HttpOnly/i);assert.match(cookie,/Secure/i);assert.match(cookie,/SameSite=Strict/i);assert.equal((await fetch(origin+'/api/v1/auth/me',{headers:{Cookie:cookie.split(';')[0],Origin:origin}})).status,200);
+ }finally{await app.close();}
+ console.log('PASS: real PostgreSQL reservations, concurrent quota/idempotency, durable jobs, encryption, retry without credential reset, tenant isolation, read-only reconciliation and restart-safe sessions.');
+ }finally{if(db)await db.onModuleDestroy();await admin.query('drop schema '+schema+' cascade');await admin.end();}
 }
-
-main().catch(error => { console.error(error); process.exitCode = 1; });
+main().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,0 +1,5 @@
+import {createCipheriv,createDecipheriv,randomBytes,scryptSync} from 'node:crypto';
+let cachedSecret='',cachedKey:Buffer|undefined;
+function key(){const secret=process.env.CONTROL_PLANE_SESSION_SECRET;if(!secret||secret.length<16)throw new Error('Chưa cấu hình khóa bảo vệ tác vụ.');if(cachedKey&&cachedSecret===secret)return cachedKey;cachedSecret=secret;cachedKey=scryptSync(secret,'30nice-provisioning-v1',32);return cachedKey;}
+export function sealJobSecret(value:string,context:string){const iv=randomBytes(12);const cipher=createCipheriv('aes-256-gcm',key(),iv);cipher.setAAD(Buffer.from(context));const encrypted=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);return [iv,cipher.getAuthTag(),encrypted].map(x=>x.toString('base64url')).join('.');}
+export function openJobSecret(value:string,context:string){const [iv,tag,data]=value.split('.').map(x=>Buffer.from(x,'base64url'));const cipher=createDecipheriv('aes-256-gcm',key(),iv);cipher.setAAD(Buffer.from(context));cipher.setAuthTag(tag);return Buffer.concat([cipher.update(data),cipher.final()]).toString('utf8');}

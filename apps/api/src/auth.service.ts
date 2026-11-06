@@ -3,7 +3,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 import { DatabaseService } from './database.service';
 
 type Role = 'super_admin' | 'tenant_admin' | 'mailbox_user';
-type Session = { sub: string; role: Role; tenantId?: string; exp: number; mfaAt?: number };
+type Session = { sub: string; role: Role; tenantId?: string; exp: number; mfaAt?: number; credentialVersion?:string };
 type Identity = Omit<Session, 'exp'> & { accountKey: string };
 type PendingAuth = Identity & { kind: 'setup' | 'login'; secret?: string; sourceIp: string; expiresAt: number; failures: number };
 type Credential = { secret_ciphertext: string; enabled_at: Date | null; last_totp_counter: string | number | null; recovery_hashes: string[] };
@@ -123,11 +123,11 @@ export class AuthService {
     catch (error) { this.mfaSchemaReady = undefined; throw error; }
   }
 
-  private persistentLimitKeys(scope:'login'|'mfa',keys:string[]) {
+  private persistentLimitKeys(scope:'login'|'mfa'|'invitation',keys:string[]) {
     return keys.map(key=>`${scope}:${createHash('sha256').update(key).digest('hex')}`);
   }
 
-  private async reservePersistentAttempts(scope:'login'|'mfa',keys:string[]) {
+  private async reservePersistentAttempts(scope:'login'|'mfa'|'invitation',keys:string[]) {
     if (!(await this.ensureMfaSchema())) {
       this.checkLimit(keys);
       this.recordFailure(keys);
@@ -155,7 +155,7 @@ export class AuthService {
     }
   }
 
-  private async clearPersistentAttempts(scope:'login'|'mfa',keys:string[]) {
+  private async clearPersistentAttempts(scope:'login'|'mfa'|'invitation',keys:string[]) {
     if(!(await this.ensureMfaSchema())) { this.clearAttempts(keys); return; }
     const hashedKeys=this.persistentLimitKeys(scope,keys);
     await this.database.query('DELETE FROM auth_failure_limits WHERE limit_key=ANY($1::text[])',[hashedKeys]);
@@ -227,8 +227,8 @@ export class AuthService {
       identity = { accountKey: `admin:${email}`, sub: email, role: 'super_admin' };
     } else {
       const rows = await this.database.query<{ id: string; email: string; role: 'tenant_admin' | 'mailbox_user'; tenant_id: string; password_hash: string }>(
-        'select m.id::text as id,m.email,m.role,m.tenant_id::text as tenant_id,m.password_hash from tenant_members m join tenants t on t.id=m.tenant_id where lower(m.email)=lower($1) and m.status=\'active\' and t.status=\'active\' limit 1', [email]);
-      const member = rows?.[0];
+        'select m.id::text as id,m.email,m.role,m.tenant_id::text as tenant_id,m.password_hash from tenant_members m join tenants t on t.id=m.tenant_id where lower(m.email)=lower($1) and m.status=\'active\' and t.status=\'active\'', [email]);
+      const member = rows?.length===1?rows[0]:undefined;
       if (member?.password_hash && this.verifyPassword(password, member.password_hash)) {
         identity = { accountKey: `member:${member.id}`, sub: member.email, role: member.role, tenantId: member.tenant_id };
       }
@@ -240,8 +240,12 @@ export class AuthService {
     return { mfaSetupRequired: true, setupToken: this.newPending(identity, 'setup', ip) };
   }
 
+  private adminVersion(email:string){const key=email.trim().toLowerCase();const credential=key===this.email.trim().toLowerCase()?this.password:this.additionalAdmins.find(a=>a.email===key)?.passwordHash;if(!credential)return '';return createHmac('sha256',this.secret).update(`admin-version:${key}:${credential}`).digest('hex');}
+  async guardInvitation(ip:string,token:unknown){await this.reservePersistentAttempts('invitation',[`pair:${(ip||'unknown').slice(0,64)}:${createHash('sha256').update(typeof token==='string'?token.slice(0,100):'invalid').digest('hex')}`]);}
+  async logoutAll(header?:string){const s=await this.verifyActive(header);const account=s.role==='super_admin'?`admin:${s.sub.trim().toLowerCase()}`:await this.memberAccountKey(s);await this.database.query('insert into account_session_revocations(account_key,revoked_before) values($1,now()) on conflict(account_key) do update set revoked_before=now()',[account]);return {ok:true};}
   private issue(input: Omit<Session, 'exp'>) {
     const session: Session = { sub: input.sub, role: input.role, tenantId: input.tenantId, mfaAt: Date.now(), exp: Date.now() + 8 * 60 * 60 * 1000 };
+    if(session.role==='super_admin')session.credentialVersion=this.adminVersion(session.sub);
     const body = this.encode(JSON.stringify(session));
     return { accessToken: `${body}.${this.sign(body)}`, expiresAt: session.exp, user: { email: session.sub, role: session.role, tenantId: session.tenantId } };
   }
@@ -376,7 +380,10 @@ export class AuthService {
   async verifyActive(header?: string) {
     const session = this.verify(header);
     if (!Number.isFinite(session.mfaAt)) throw new UnauthorizedException('Phiên đăng nhập cũ chưa xác thực hai bước. Vui lòng đăng nhập lại để hoàn tất MFA.');
-    if (session.role === 'super_admin') return session;
+    const account=session.role==='super_admin'?`admin:${session.sub.trim().toLowerCase()}`:await this.memberAccountKey(session);
+    const revocations=await this.database.query<{revoked_before:Date}>('select revoked_before from account_session_revocations where account_key=$1',[account]);
+    if(revocations?.[0]&&new Date(revocations[0].revoked_before).getTime()>=session.mfaAt!)throw new UnauthorizedException('Phiên đã được thu hồi. Hãy đăng nhập lại.');
+    if(session.role==='super_admin'){const version=this.adminVersion(session.sub);if(!version||version!==session.credentialVersion)throw new UnauthorizedException('Thông tin tài khoản đã thay đổi. Hãy đăng nhập lại.');return session;}
     let rows;
     try { rows = await this.database.query<{ member_status: string; tenant_status: string }>('select m.status as member_status,t.status as tenant_status from tenant_members m join tenants t on t.id=m.tenant_id where lower(m.email)=lower($1) and m.tenant_id=$2::uuid limit 1', [session.sub, session.tenantId]); }
     catch { throw new ServiceUnavailableException('Không thể kiểm tra trạng thái tài khoản. Vui lòng thử lại sau.'); }

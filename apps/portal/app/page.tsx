@@ -23,6 +23,8 @@ import {
 import DomainWizard from "./DomainWizard";
 import AuthGate from "./AuthGate";
 import TenantCreateForm from "./TenantCreateForm";
+import {CustomerProvider,useCustomer} from './CustomerContext';
+import {CustomerWorkspace,ServicePlans,OperationsPanel,SecurityPanel} from './ProductPanels';
 import DnsHealthPanel from "./DnsHealthPanel";
 import MemberPanel from "./MemberPanel";
 import MailboxPanel from "./MailboxPanel";
@@ -54,6 +56,9 @@ const menus = [
   { label: "Cài đặt", icon: Settings },
 ];
 function Dashboard() {
+  const customer=useCustomer();
+  const [viewer,setViewer]=useState<{email:string;role:string}|null>(null);
+  useEffect(()=>{let live=true;fetch('/api/api/v1/auth/me').then(r=>r.ok?r.json():null).then(d=>{if(live)setViewer(d);}).catch(()=>{if(live)setViewer(null);});return()=>{live=false;};},[]);
   const [active, setActive] = useState("Tổng quan");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("Tất cả");
@@ -147,13 +152,13 @@ function Dashboard() {
           <span className="avatar">30</span>
           <div>
             <b>30 NICE</b>
-            <small>Super Administrator</small>
+            <small>{viewer?.role==='super_admin'?'Quản trị hệ thống':'Quản trị doanh nghiệp'}</small>
           </div>
           <ChevronDown size={14} />
         </div>
         <div className="menucap">WORKSPACE</div>
         <nav>
-          {menus.map(({ label, icon: Icon }) => (
+          {menus.filter(item=>!['Gói dịch vụ','Máy chủ'].includes(item.label)||viewer?.role==='super_admin').map(({ label, icon: Icon }) => (
             <button
               key={label}
               onClick={() => setActive(label)}
@@ -169,7 +174,7 @@ function Dashboard() {
         </nav>
         <div className="sidestatus">
           <div className="statusline">
-            <span className="statusdot" style={{ background: healthLoading ? "#98a2b3" : controlPlaneReady ? "#12b76a" : "#d92d20" }} /> {healthLoading ? "ĐANG KIỂM TRA HẠ TẦNG" : controlPlaneReady ? "PRODUCTION · SẴN SÀNG" : "CẦN KIỂM TRA HẠ TẦNG"}
+            <span className="statusdot" style={{ background: healthLoading ? "#98a2b3" : controlPlaneReady ? "#12b76a" : "#d92d20" }} /> {healthLoading ? "ĐANG KIỂM TRA HẠ TẦNG" : controlPlaneReady ? "HẠ TẦNG ĐANG HOẠT ĐỘNG" : "CẦN KIỂM TRA HẠ TẦNG"}
           </div>
           <p>Database: PostgreSQL</p>
           <p>Mail Adapter: Mailcow</p>
@@ -178,7 +183,7 @@ function Dashboard() {
           <span className="avatar user">PT</span>
           <div>
             <b>Administrator</b>
-            <small>Production control</small>
+            <small>Điều hành dịch vụ</small>
           </div>
         </div>
       </aside>
@@ -338,7 +343,8 @@ function Dashboard() {
                 <MailboxPanel />
               ) : active === "Khách hàng" ? (
                 <>
-                  <TenantCreateForm onCreated={() => setTenantRefresh(value => value + 1)} />
+                  {viewer?.role==='super_admin'&&<TenantCreateForm onCreated={t => {customer.selectTenant(t.id);setTenantRefresh(value => value + 1);}} />}
+                  <CustomerWorkspace />
                   <div className="tools">
                     <div className="search">
                       <Search size={16} />
@@ -360,7 +366,7 @@ function Dashboard() {
                   {tenantLoadError && <div role="alert" className="empty"><AlertTriangle size={22} /><h3>Không tải được danh sách khách hàng</h3><p>Kiểm tra phiên đăng nhập hoặc kết nối API rồi tải lại trang.</p></div>}
                   {!tenantLoadError && <CustomerTable data={shown} />}
                 </>
-              ) : (
+              ) : active === "Gói dịch vụ" ? (<ServicePlans />) : active === "Máy chủ" ? (<OperationsPanel />) : active === "Bảo mật" ? (<SecurityPanel />) : active === "Cài đặt" ? (<CustomerWorkspace />) : (
                 <div className="empty">
                   <AlertTriangle size={26} />
                   <h3>Module đang được nối dần vào backend</h3>
@@ -373,7 +379,7 @@ function Dashboard() {
             </section>
           )}
           <footer>
-          {`30NICE MAIL CLOUD · ${healthError ? "API KHÔNG KẾT NỐI" : controlPlaneReady ? "PRODUCTION · SẴN SÀNG" : "CẦN KIỂM TRA"} · MAILCOW ${serviceText(mailBackendOnline).toUpperCase()}`}
+          {`30NICE MAIL CLOUD · ${healthError ? "API KHÔNG KẾT NỐI" : controlPlaneReady ? "HẠ TẦNG ĐANG HOẠT ĐỘNG" : "CẦN KIỂM TRA"} · MAILCOW ${serviceText(mailBackendOnline).toUpperCase()}`}
           </footer>
         </div>
       </main>
@@ -383,7 +389,7 @@ function Dashboard() {
 export default function Home() {
   return (
     <AuthGate>
-      <Dashboard />
+      <CustomerProvider><Dashboard /></CustomerProvider>
     </AuthGate>
   );
 }
@@ -395,7 +401,7 @@ function CustomerTable({ data }: { data: typeof tenants }) {
           <tr>
             <th>KHÁCH HÀNG</th>
             <th>TÊN MIỀN</th>
-            <th>MAILBOX DEMO</th>
+            <th>HỘP THƯ</th>
             <th>TRẠNG THÁI</th>
           </tr>
         </thead>

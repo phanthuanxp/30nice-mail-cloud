@@ -5,8 +5,8 @@ import DnsCopyButton from './DnsCopyButton';
 import './dns-setup.css';
 type Check={ok:boolean;state:string;message:string;actual:string[]};
 type RecordRow={id:string;type:string;host:string;value:string;group:'required'|'webmail'|'optional';help:string;priority?:number};
-type Setup={domain:string;status:string;checks:Record<string,Check>;records:RecordRow[];webmail:{host:string;url:string;ready:boolean;activation:{state:string;message:string;updatedAt?:string}};checkedAt:string};
-export default function DnsSetupPanel({tenantId,domainId}:{tenantId:string;domainId:string}){
+type Setup={domain:string;status:string;provisioningStatus?:string;provisioningError?:string;checks:Record<string,Check>;records:RecordRow[];webmail:{host:string;url:string;ready:boolean;activation:{state:string;message:string;updatedAt?:string}};checkedAt:string};
+export default function DnsSetupPanel({tenantId,domainId,onChanged}:{tenantId:string;domainId:string;onChanged?:()=>void}){
  const [data,setData]=useState<Setup|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
  const [activationPending,setActivationPending]=useState(false);const activationStarted=useRef(0);
  const seq=useRef(0);const base=`/api/api/v1/tenants/${tenantId}/domains/${domainId}`;
@@ -14,15 +14,17 @@ export default function DnsSetupPanel({tenantId,domainId}:{tenantId:string;domai
  async function load(clearError=true){const id=++seq.current;setBusy(true);if(clearError)setError('');try{const result=await request('/dns-health');if(!Array.isArray(result.records)||!result.webmail)throw Error('Dữ liệu DNS chưa sẵn sàng. Hãy tải lại trang.');if(id===seq.current)setData(result);}catch(e){if(id===seq.current)setError(e instanceof Error?e.message:'Không đọc được DNS.');}finally{if(id===seq.current)setBusy(false);}}
  useEffect(()=>{setData(null);setMessage('');setActivationPending(false);void load();return()=>{seq.current++;};},[base]);
  useEffect(()=>{if(data?.webmail.ready||(data?.webmail.activation.state==='failed'&&Date.parse(data.webmail.activation.updatedAt||'')>=activationStarted.current)||(activationPending&&Date.now()-activationStarted.current>600000)){if(activationPending)setActivationPending(false);return;}if(!activationPending&&data?.webmail.activation.state!=='running')return;const timer=setTimeout(()=>void load(),5000);return()=>clearTimeout(timer);},[data,activationPending]);
- async function action(kind:'prepare'|'verify'|'activate'){
+ async function action(kind:'prepare'|'verify'|'activate'|'connect'){
   const id=++seq.current;setBusy(true);setError('');setMessage('');
   try{
    if(kind==='verify'){
     const token=data?.records.find(r=>r.id==='ownership')?.value;if(!token)throw Error('Bấm Chuẩn bị DNS để lấy mã xác minh.');
     await request('/verify',true,{token});
-    if(id===seq.current)setMessage('Đã xác minh quyền sở hữu. Bấm Chuẩn bị DNS để lấy khóa DKIM.');
-   }else if(kind==='prepare'){await request('/dns-setup',true);if(id===seq.current)setMessage('Đã chuẩn bị bản ghi DNS riêng cho tên miền.');}
+    await request('/dns-setup',true);
+    if(id===seq.current)setMessage('Đã xác minh quyền sở hữu và chuẩn bị bản ghi DKIM.');
+   }else if(kind==='connect'){await request('/connect',true);if(id===seq.current)setMessage('Đã kết nối tên miền với dịch vụ email.');}else if(kind==='prepare'){await request('/dns-setup',true);if(id===seq.current)setMessage('Đã chuẩn bị bản ghi DNS riêng cho tên miền.');}
    else{const result=await request('/webmail-activate',true);if(id===seq.current){setMessage(result.message);activationStarted.current=Date.now();setActivationPending(true);}}
+   if(id===seq.current)onChanged?.();
   }catch(e){if(id===seq.current)setError(e instanceof Error?e.message:'Không hoàn tất yêu cầu.');}
   finally{if(id===seq.current){setBusy(false);void load(false);}}
  }
@@ -32,6 +34,7 @@ export default function DnsSetupPanel({tenantId,domainId}:{tenantId:string;domai
   {error&&<p className="dnsSetupError" role="alert">{error}</p>}{message&&<p className="dnsSetupNotice" role="status">{message}</p>}
   {!data&&<p role="status">{busy?'Đang đọc DNS công khai…':'Chưa có kết quả. Bấm Kiểm tra DNS để thử lại.'}</p>}
   {data&&<>
+   <div className="dnsSetupNotice"><span><b>{data.status==='verified'?'Quyền sở hữu: đã xác minh':'Quyền sở hữu: chưa xác minh'}</b><br/>Dịch vụ email: {data.provisioningStatus==='ready'?'đã kết nối':data.provisioningError||'chưa kết nối Mailcow'}</span>{data.status==='verified'&&data.provisioningStatus!=='ready'&&<button className="primary" disabled={busy} onClick={()=>void action('connect')}>Kết nối dịch vụ email</button>}</div>
    <div className="dnsSetupNotice"><Info size={18}/><span>Nhập tên ngắn như <b>_dmarc</b>, không nhập thêm đuôi <b>.{data.domain}</b> nếu nhà cung cấp tự nối. TLSA và SRV không bắt buộc trong luồng cơ bản.</span></div>
    {(['required','webmail','optional'] as const).map(group=><section className="dnsSetupGroup" key={group}>
     <h4>{group==='required'?'1. Xác minh và xác thực email':group==='webmail'?'2. Trang đăng nhập riêng':'3. Ứng dụng thư — tùy chọn'}</h4>

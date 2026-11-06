@@ -1,6 +1,7 @@
 'use client';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import './alias-panel.css';
+import {useCustomer} from './CustomerContext';
 type Tenant={id:string;name:string};
 type Domain={id:string;domain:string;status:string};
 type Mailbox={id:string;address:string;status:string};
@@ -12,6 +13,7 @@ async function json(path:string,init?:RequestInit){
   return result;
 }
 export default function AliasPanel(){
+  const customer=useCustomer();
   const [tenants,setTenants]=useState<Tenant[]>([]);
   const [tenant,setTenant]=useState('');
   const [domains,setDomains]=useState<Domain[]>([]);
@@ -26,7 +28,7 @@ export default function AliasPanel(){
   const [notice,setNotice]=useState('');
   const sequence=useRef(0);
   const inFlight=useRef(false);
-  useEffect(()=>{let active=true;json('/api/api/v1/tenants').then(data=>{if(!Array.isArray(data))throw Error('Danh sách khách hàng không hợp lệ');if(active){setTenants(data);setTenant(data[0]?.id||'');}}).catch(e=>{if(active)setError(e.message);});return()=>{active=false;};},[]);
+  useEffect(()=>{let active=true;json('/api/api/v1/tenants').then(data=>{if(!Array.isArray(data))throw Error('Danh sách khách hàng không hợp lệ');if(active){setTenants(data);setTenant(data.find((t:Tenant)=>t.id===customer.tenantId)?.id||data[0]?.id||'');}}).catch(e=>{if(active)setError(e.message);});return()=>{active=false;};},[customer.tenantId]);
   const load=useCallback(async()=>{
     const request=++sequence.current;
     if(!tenant)return;
@@ -53,7 +55,7 @@ export default function AliasPanel(){
   function create(event:FormEvent){event.preventDefault();if(!tenant||!domain||!destination||busy||loading)return;void write('/api/api/v1/tenants/'+tenant+'/aliases',{source:local.trim().toLowerCase()+'@'+domain,destination});}
   return <div className="alias-panel">
     <div className="alias-heading"><div><h2>Bí danh email</h2><p>Nhiều địa chỉ cùng nhận vào một hộp thư, không cần mật khẩu riêng.</p></div><button className="ghost" disabled={!tenant||loading||busy} onClick={()=>void load()}>Làm mới</button></div>
-    <label className="alias-field">Khách hàng<select value={tenant} disabled={busy} onChange={e=>{sequence.current++;setItems([]);setTenant(e.target.value);}}><option value="">Chọn khách hàng</option>{tenants.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+    <label className="alias-field">Khách hàng<select value={tenant} disabled={busy} onChange={e=>{sequence.current++;setItems([]);customer.selectTenant(e.target.value);setTenant(e.target.value);}}><option value="">Chọn khách hàng</option>{tenants.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
     {error&&<p className="alias-error" role="alert">{error}</p>}{notice&&<p className="alias-notice" role="status">{notice}</p>}
     <form className="alias-create" onSubmit={create}><label className="alias-field">Tên bí danh<input required maxLength={64} pattern="[-a-zA-Z0-9._+]+" value={local} disabled={busy||loading} onChange={e=>setLocal(e.target.value)} placeholder="sales hoặc support"/></label><label className="alias-field">Tên miền đã xác minh<select value={domain} disabled={busy||loading} onChange={e=>setDomain(e.target.value)} required><option value="">Chọn tên miền</option>{domains.map(d=><option key={d.id} value={d.domain}>@{d.domain}</option>)}</select></label><label className="alias-field">Hộp thư nhận<select value={destination} disabled={busy||loading} onChange={e=>setDestination(e.target.value)} required><option value="">Chọn hộp thư</option>{mailboxes.map(m=><option key={m.id} value={m.address}>{m.address}</option>)}</select></label><button type="submit" className="primary" disabled={busy||loading||!domain||!destination}>{busy?'Đang đồng bộ…':'Tạo bí danh'}</button></form>
     <p className="alias-hint">Bí danh chỉ nhận vào hộp thư đang hoạt động của khách hàng này. Muốn đăng nhập webmail, dùng địa chỉ hộp thư nhận.</p>

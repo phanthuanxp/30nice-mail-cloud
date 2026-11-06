@@ -17,6 +17,17 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: integration-only-password
+          POSTGRES_DB: mailcloud_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -57,6 +68,8 @@ jobs:
       - name: Verify authentication and authorization
         run: npm run test:auth
       - name: Verify mailbox and tenant provisioning
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:integration-only-password@127.0.0.1:5432/mailcloud_test
         run: |
           npm run test:mailbox
           npm run test:domain
