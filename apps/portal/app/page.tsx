@@ -53,32 +53,6 @@ const menus = [
   { label: "Bảo mật", icon: ShieldCheck },
   { label: "Cài đặt", icon: Settings },
 ];
-const dnsRecords = [
-  {
-    type: "MX",
-    host: "@",
-    value: "mx.30nice.vn",
-    help: "Nhận thư đến cho tên miền",
-  },
-  {
-    type: "TXT",
-    host: "@",
-    value: "v=spf1 mx a -all",
-    help: "Xác thực máy chủ được phép gửi thư",
-  },
-  {
-    type: "TXT",
-    host: "dkim._domainkey",
-    value: "Lấy mã DKIM riêng trong Mailcow",
-    help: "Ký số cho email gửi đi",
-  },
-  {
-    type: "TXT",
-    host: "_dmarc",
-    value: "v=DMARC1; p=quarantine; rua=mailto:admin@30nice.vn",
-    help: "Bảo vệ tên miền khỏi giả mạo",
-  },
-];
 function Dashboard() {
   const [active, setActive] = useState("Tổng quan");
   const [query, setQuery] = useState("");
@@ -345,9 +319,9 @@ function Dashboard() {
               <div className="sectionTitle">
                 <div>
                   <h2>{active}</h2>
-                  <p>Dữ liệu backend production-safe</p>
+                  <p>Quản lý dịch vụ email doanh nghiệp</p>
                 </div>
-                <span className="label ok">API connected</span>
+                <span className="label ok">Dịch vụ email</span>
               </div>
               {active === "Thiết lập khách hàng" ? (
                 <OnboardingPanel />

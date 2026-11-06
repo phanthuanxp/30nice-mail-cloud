@@ -22,6 +22,22 @@ export class MailcowService {
     if(items.some((item:{type?:string}|null)=>item?.type==='danger'||item?.type==='error')) throw new Error('Mailcow rejected the provisioning request');
     return result;
   }
+  async getDkim(domain:string):Promise<{selector:string;value:string}|null>{
+    if(this.mode!=='production')return null;
+    if(!this.baseUrl||!this.apiKey)throw new Error('Chưa cấu hình kết nối Mailcow');
+    const r=await fetch(`${this.baseUrl}/api/v1/get/dkim/${encodeURIComponent(domain)}`,{headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(10000)});
+    if(!r.ok)throw new Error('Không đọc được khóa DKIM từ Mailcow');
+    const data=await r.json();
+    if(data===null||data===false||(typeof data==='object'&&!Array.isArray(data)&&Object.keys(data).length===0))return null;
+    if(typeof data?.dkim_selector!=='string'||!/^[a-zA-Z0-9_-]{1,63}$/.test(data.dkim_selector)||typeof data?.dkim_txt!=='string'||!/(?:^|;)\s*p=[A-Za-z0-9+/=]+/.test(data.dkim_txt))throw new Error('Mailcow chưa trả về khóa DKIM hợp lệ');
+    return {selector:data.dkim_selector,value:data.dkim_txt};
+  }
+  async ensureDkim(domain:string){
+    const current=await this.getDkim(domain);if(current)return current;
+    if(this.mode!=='production')return null;
+    await this.request('/api/v1/add/dkim',{domains:domain,dkim_selector:'dkim',key_size:2048});
+    const created=await this.getDkim(domain);if(!created)throw new Error('Chưa tạo được khóa DKIM');return created;
+  }
   async addDomain(domain:string){return this.request('/api/v1/add/domain',{domain,description:'Managed by 30NICE Mail Cloud',aliases:0,mailboxes:0,quota:0,defquota:3072,maxquota:10240,relay_all_recipients:0,relay_unknown_only:0,backupmx:0,gal:0,active:1});}
   async ensureDomain(domain:string){
     if(this.mode==='mock'||this.mode==='dry-run') return this.addDomain(domain);

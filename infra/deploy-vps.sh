@@ -54,6 +54,9 @@ install -d -m 700 "$BACKUP_DIR"
 (umask 077; docker exec mailcloud-postgres-1 pg_dump -U mailcloud -d mailcloud -Fc > "$BACKUP_DIR/database.dump")
 test -s "$BACKUP_DIR/database.dump"
 "$NODE" scripts/migrate.cjs
+install -m 755 infra/webmail-activate.py /usr/local/sbin/30nice-webmail-activate
+install -m 644 infra/30nice-webmail@.service /etc/systemd/system/30nice-webmail@.service
+systemctl daemon-reload
 pm2 startOrReload infra/ecosystem.config.cjs --update-env
 
 API_OK=0
