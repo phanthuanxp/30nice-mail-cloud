@@ -55,7 +55,7 @@ export class MailboxOperations{
    const c=await this.limits(q,tenant,address.split('@')[1]);const remote=c.remoteBoxes.find(m=>m.address===address);
    const prior=(await q<Box>('select * from mailboxes where address=$1 and tenant_id=$2::uuid',[address,tenant]))[0];
    if(remote){
-    const state=remote.quotaBytes===quota*GB?'ready':'reconcile';
+    const state=remote.quotaBytes===quota*GB&&(!prior||remote.active===(prior.status==='active'))?'ready':'reconcile';
     const box=prior??(await q<Box>("insert into mailboxes(tenant_id,domain_id,address,quota_gb,status,provisioning_state) select $1::uuid,id,$3,$4,$5,$6 from domains where tenant_id=$1::uuid and domain=$2 returning *",[tenant,address.split('@')[1],address,quota,remote.active?'active':'disabled',state]))[0];
     await q('update mailboxes set provisioning_state=$3,observed_quota_bytes=$4,observed_active=$5,used_bytes=$6,synced_at=now() where id=$1::uuid and tenant_id=$2::uuid',[box.id,tenant,state,remote.quotaBytes,remote.active,remote.usedBytes]);
     await q("update provisioning_jobs set status=$3,secret_ciphertext=null,lease_token=null,lease_expires_at=null,last_error=$4,updated_at=now() where id=$1::uuid and tenant_id=$2::uuid",[id,tenant,state==='ready'?'succeeded':'dead_letter',state==='ready'?'Đã đối soát hộp thư có sẵn; mật khẩu không thay đổi.':'Hạn mức thực tế khác yêu cầu. Cần đối soát trước khi tiếp tục.']);
@@ -97,7 +97,7 @@ export class MailboxOperations{
    if(body.quotaGb!==undefined)this.validateCapacity(await this.limits(q,tenant,box.address.split('@')[1]),body.quotaGb,box.address);
    await this.mailcow.editMailbox(box.address,body.quotaGb,body.status as 'active'|'disabled'|undefined);
    const found=(await this.mailcow.getMailboxes(box.address.split('@')[1])).find(m=>m.address===box.address);if(!found)throw new Error('Chưa đọc lại được hộp thư. Hãy đối soát.');
-   const changed=await q("update mailboxes set quota_gb=coalesce($3,quota_gb),status=coalesce($4,status),observed_quota_bytes=$5,observed_active=$6,used_bytes=$7,synced_at=now(),provisioning_state=case when (coalesce($3,quota_gb)::bigint*1073741824)=$5 then 'ready' else 'reconcile' end where id=$1::uuid and tenant_id=$2::uuid returning id::text,tenant_id::text as \"tenantId\",address,quota_gb as \"quotaGb\",status,provisioning_state as \"provisioningState\"",[id,tenant,body.quotaGb??null,body.status??null,found.quotaBytes,found.active,found.usedBytes]);
+   const changed=await q("update mailboxes set quota_gb=coalesce($3,quota_gb),status=coalesce($4,status),observed_quota_bytes=$5,observed_active=$6,used_bytes=$7,synced_at=now(),provisioning_state=case when (coalesce($3,quota_gb)::bigint*1073741824)=$5 and (coalesce($4,status)='active')=$6 then 'ready' else 'reconcile' end where id=$1::uuid and tenant_id=$2::uuid returning id::text,tenant_id::text as \"tenantId\",address,quota_gb as \"quotaGb\",status,provisioning_state as \"provisioningState\"",[id,tenant,body.quotaGb??null,body.status??null,found.quotaBytes,found.active,found.usedBytes]);
    if(body.status==='disabled')await q('delete from webmail_sessions where email=$1',[box.address]);await this.audit(q,tenant,actor,'mailbox.update',id);return changed;
   }))[0];
  }

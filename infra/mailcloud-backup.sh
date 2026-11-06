@@ -28,6 +28,11 @@ for SITE in /etc/nginx/sites-available/30nice-webmail-*; do
   CONFIG_PATHS+=("${SITE#/}" "etc/nginx/sites-enabled/${SITE##*/}")
 done
 for HOST in "${HOSTS[@]}"; do
+  # Central enabled sites may point to named configuration files, rather than $HOST.
+  TARGET=$(readlink -f "/etc/nginx/sites-enabled/$HOST" 2>/dev/null || true)
+  case "$TARGET" in
+    /etc/nginx/sites-available/nginx-admin.30nice.vn.conf|/etc/nginx/sites-available/nginx-webmail.30nice.vn.conf|/etc/nginx/sites-available/mx.30nice.vn) CONFIG_PATHS+=("${TARGET#/}");;
+  esac
   for ITEM in "etc/nginx/sites-available/$HOST" "etc/nginx/sites-enabled/$HOST" "etc/letsencrypt/live/$HOST" "etc/letsencrypt/archive/$HOST" "etc/letsencrypt/renewal/$HOST.conf"; do
     if [[ -e "/$ITEM" || -L "/$ITEM" ]]; then CONFIG_PATHS+=("$ITEM"); fi
   done
