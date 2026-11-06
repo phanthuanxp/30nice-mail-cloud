@@ -78,7 +78,7 @@ server {{
             changed = True
             run(['nginx', '-t'])
             run(['systemctl', 'reload', 'nginx'])
-            run(['certbot', 'certonly', '--webroot', '-w', str(webroot), '--non-interactive', '--agree-tos', '--register-unsafely-without-email', '--keep-until-expiring', '--cert-name', host, '-d', host], timeout=150)
+            run(['certbot', 'certonly', '--webroot', '-w', str(webroot), '--non-interactive', '--agree-tos', '--register-unsafely-without-email', '--keep-until-expiring', '--cert-name', host, '-d', host, '--deploy-hook', '/usr/sbin/nginx -t && /usr/bin/systemctl reload nginx'], timeout=150)
             ssl = f'''server {{
  listen 443 ssl http2; listen [::]:443 ssl http2;
  server_name {host};

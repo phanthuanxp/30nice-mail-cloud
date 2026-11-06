@@ -35,7 +35,8 @@ class ActivationChecks(unittest.TestCase):
     else:
      helper.main('example.com');self.assertIn('ssl_certificate',site.read_text());self.assertTrue(enabled.is_symlink())
    return calls
- def test_verified_dns_and_https_success(self):self.exercise()
+ def test_verified_dns_and_https_success(self):
+  calls=self.exercise();self.assertTrue(any(c[0]=='certbot' and '--deploy-hook' in c for c in calls))
  def test_unverified_domain_never_changes_nginx(self):
   calls=self.exercise('ownership');self.assertFalse(any(c[0]=='nginx' for c in calls))
  def test_wrong_dns_never_changes_nginx(self):
