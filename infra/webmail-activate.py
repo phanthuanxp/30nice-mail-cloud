@@ -108,7 +108,7 @@ server {{
             site.write_text(http + ssl)
             run(['nginx', '-t'])
             run(['systemctl', 'reload', 'nginx'])
-            page = run(['curl', '-fsS', '--max-time', '15', '--resolve', host + ':443:127.0.0.1', 'https://' + host + '/'])
+            page = run(['curl', '-fsS', '--retry', '8', '--retry-delay', '1', '--retry-all-errors', '--retry-max-time', '20', '--max-time', '8', '--resolve', host + ':443:127.0.0.1', 'https://' + host + '/'])
             if '30NICE' not in page or 'Đăng nhập quản trị' in page:
                 raise ValueError('Webmail page check failed')
             save('ready', 'Webmail riêng và HTTPS đã sẵn sàng. Có thể đăng nhập bằng tài khoản hộp thư.')
