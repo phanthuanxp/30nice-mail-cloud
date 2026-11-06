@@ -1,9 +1,10 @@
-import { Injectable, UnauthorizedException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, HttpException, HttpStatus, ServiceUnavailableException } from '@nestjs/common';
 import { ImapFlow } from 'imapflow';
 import nodemailer from 'nodemailer';
 import { simpleParser } from 'mailparser';
 import sanitizeHtml = require('sanitize-html');
 import { createHash, randomBytes } from 'node:crypto';
+import {openJobSecret,sealJobSecret} from './job-secrets';
 import { DatabaseService } from './database.service';
 
 type WebmailSession = { email: string; password: string; expiresAt: number };
@@ -194,6 +195,7 @@ export class WebmailService {
     const now = Date.now();
     for (const [token, session] of this.sessions) if (session.expiresAt <= now) this.sessions.delete(token);
     await this.reserveLoginAttempts(keys);
+    if(process.env.NODE_ENV==='production'){const blocked=await this.database?.query("select m.id from mailboxes m join tenants t on t.id=m.tenant_id where m.address=$1 and (m.status='disabled' or t.status<>'active')",[email]);if(blocked?.length)throw new UnauthorizedException('Tài khoản đang bị khóa hoặc dịch vụ đã tạm ngưng.');}
     try {
       const client = this.makeClient(email, secret);
       try { await client.connect(); } finally { await client.logout().catch(() => undefined); }
@@ -203,11 +205,29 @@ export class WebmailService {
     await this.clearLoginAttempts(keys);
     if (this.sessions.size >= this.maxSessions) throw new HttpException('Hệ thống đang có quá nhiều phiên đăng nhập. Vui lòng thử lại sau.', HttpStatus.SERVICE_UNAVAILABLE);
     const token = randomBytes(32).toString('base64url');
-    this.sessions.set(token, { email, password: secret, expiresAt: now + 8 * 60 * 60_000 });
+    const session={email,password:secret,expiresAt:now+8*60*60_000};
+    if(process.env.NODE_ENV==='production'){
+      if(!this.database)throw new ServiceUnavailableException('Chưa có nơi lưu phiên an toàn.');
+      const hash=createHash('sha256').update(token).digest('hex');
+      const saved=await this.database.query('insert into webmail_sessions(token_hash,email,secret_ciphertext,expires_at) values($1,$2,$3,$4)',[hash,email,sealJobSecret(JSON.stringify(session),`webmail:${hash}`),new Date(session.expiresAt)]);
+      if(saved===null)throw new ServiceUnavailableException('Chưa lưu được phiên. Vui lòng thử lại.');
+      await this.database.query("insert into domain_webmail_logins(domain_id,last_login_at,mailbox_email) select d.id,now(),$1 from domains d where d.domain=$2 and d.status='verified' on conflict(domain_id) do update set last_login_at=now(),mailbox_email=excluded.mailbox_email",[email,email.split('@')[1]]);
+    }
+    this.sessions.set(token,session);
     return { token, email, expiresAt: now + 8 * 60 * 60_000 };
   }
 
-  logout(token?: string) { if (token) this.sessions.delete(token); }
+  async logout(token?:string){if(!token)return;this.sessions.delete(token);if(process.env.NODE_ENV==='production')await this.database?.query('delete from webmail_sessions where token_hash=$1',[createHash('sha256').update(token).digest('hex')]);}
+  async resumeSession(token?:string){
+    if(!token||process.env.NODE_ENV!=='production')return;
+    const hash=createHash('sha256').update(token).digest('hex');
+    const rows=await this.database?.query<{secret_ciphertext:string}>("select s.secret_ciphertext from webmail_sessions s where s.token_hash=$1 and s.expires_at>now() and not exists(select 1 from mailboxes m join tenants t on t.id=m.tenant_id where m.address=s.email and (m.status='disabled' or t.status<>'active'))",[hash]);
+    if(!rows?.[0]){this.sessions.delete(token);return;}
+    try{const value=JSON.parse(openJobSecret(rows[0].secret_ciphertext,`webmail:${hash}`));if(typeof value.email!=='string'||typeof value.password!=='string'||value.expiresAt<=Date.now())throw Error();this.sessions.set(token,value);}catch{this.sessions.delete(token);throw new UnauthorizedException('Phiên không hợp lệ. Hãy đăng nhập lại.');}
+  }
+  async preferences(token?:string){const email=this.session(token).email;const rows=await this.database?.query<{signature_html:string}>('select signature_html from webmail_preferences where email=$1',[email]);return {signatureHtml:rows?.[0]?.signature_html||''};}
+  async savePreferences(token:string|undefined,signatureInput:unknown){if(typeof signatureInput!=='string'||signatureInput.length>20000)throw new BadRequestException('Chữ ký tối đa 20.000 ký tự.');const email=this.session(token).email;const signature=sanitizeHtml(signatureInput,{allowedTags:['p','br','b','strong','i','em','u','a','span'],allowedAttributes:{a:['href','title']},allowedSchemes:['http','https','mailto']});await this.database?.query('insert into webmail_preferences(email,signature_html) values($1,$2) on conflict(email) do update set signature_html=excluded.signature_html,updated_at=now()',[email,signature]);return {signatureHtml:signature};}
+
 
   profile(token?: string) { return { email: this.session(token).email }; }
 

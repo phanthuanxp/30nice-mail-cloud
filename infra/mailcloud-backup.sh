@@ -17,11 +17,30 @@ for volume in vmail crypt; do
   test -d "$SOURCE"
   tar -C "$SOURCE" -czf "$OUT/$volume.tar.gz" .
 done
-tar -C /opt -czf "$OUT/configuration.tar.gz" 30nice-mail-cloud/.env.prod mailcow-dockerized/mailcow.conf mailcow-dockerized/data/assets/ssl
+# Version 2 uses paths relative to / and includes only Mail Cloud owned material.
+CONFIG_PATHS=(opt/30nice-mail-cloud/.env.prod opt/mailcow-dockerized/mailcow.conf opt/mailcow-dockerized/data/assets/ssl)
+HOSTS=(admin.30nice.vn mail.30nice.vn mx.30nice.vn)
+for SITE in /etc/nginx/sites-available/30nice-webmail-*; do
+  [[ -f "$SITE" ]] || continue
+  HOST=${SITE##*/}; HOST=${HOST#30nice-webmail-}
+  [[ "$HOST" =~ ^mail\.[a-z0-9.-]+$ ]] || continue
+  HOSTS+=("$HOST")
+  CONFIG_PATHS+=("${SITE#/}" "etc/nginx/sites-enabled/${SITE##*/}")
+done
+for HOST in "${HOSTS[@]}"; do
+  for ITEM in "etc/nginx/sites-available/$HOST" "etc/nginx/sites-enabled/$HOST" "etc/letsencrypt/live/$HOST" "etc/letsencrypt/archive/$HOST" "etc/letsencrypt/renewal/$HOST.conf"; do
+    if [[ -e "/$ITEM" || -L "/$ITEM" ]]; then CONFIG_PATHS+=("$ITEM"); fi
+  done
+done
+for ITEM in etc/systemd/system/30nice-webmail@.service etc/systemd/system/30nice-mailcloud-backup.service etc/systemd/system/30nice-mailcloud-backup.timer etc/systemd/system/30nice-mailcloud-monitor.service etc/systemd/system/30nice-mailcloud-monitor.timer usr/local/sbin/30nice-webmail-activate usr/local/sbin/30nice-mailcow-sync-tls usr/local/sbin/30nice-mailcloud-monitor etc/letsencrypt/renewal-hooks/deploy/30nice-mailcow-tls var/lib/30nice-mailcloud-webmail; do
+  if [[ -e "/$ITEM" || -L "/$ITEM" ]]; then CONFIG_PATHS+=("$ITEM"); fi
+done
+tar -C / -czf "$OUT/configuration.tar.gz" "${CONFIG_PATHS[@]}"
+printf '%s\n' 'configuration-layout-v2: archive entries are relative to /; only Mail Cloud managed hostnames are included.' > "$OUT/configuration-layout.txt"
 git -C /opt/30nice-mail-cloud rev-parse HEAD > "$OUT/revision.txt"
 test -s "$OUT/control-plane.dump"
 test -s "$OUT/mailcow.sql"
-(cd "$OUT" && sha256sum control-plane.dump mailcow.sql vmail.tar.gz crypt.tar.gz configuration.tar.gz revision.txt > SHA256SUMS && sha256sum -c SHA256SUMS)
+(cd "$OUT" && sha256sum control-plane.dump mailcow.sql vmail.tar.gz crypt.tar.gz configuration.tar.gz configuration-layout.txt revision.txt > SHA256SUMS && sha256sum -c SHA256SUMS)
 rclone copy "$OUT" "$REMOTE/$STAMP" --transfers 2 --checkers 2 --retries 3 --log-level ERROR
 rclone check "$OUT" "$REMOTE/$STAMP" --download --one-way --log-level ERROR
 printf '%s\n' "$STAMP" > "$ROOT/last-success"

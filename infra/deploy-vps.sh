@@ -17,6 +17,7 @@ finish() {
   trap - EXIT
   if [[ "$status" != "0" && "$UPDATED" == "1" && -n "$PREVIOUS_SHA" ]]; then
     echo "Deploy failed; restoring previous revision."
+    if ! git -C "$APP_DIR" cat-file -e "$PREVIOUS_SHA:apps/api/src/provisioning-worker.ts" 2>/dev/null; then pm2 delete mailcloud-worker || true; fi
     git -C "$APP_DIR" reset --hard "$PREVIOUS_SHA" || true
     if (cd "$APP_DIR" && npm ci --no-audit --no-fund && npm run build:api && npm run build); then
       (cd "$APP_DIR" && pm2 startOrReload infra/ecosystem.config.cjs --update-env) || true
@@ -57,6 +58,9 @@ test -s "$BACKUP_DIR/database.dump"
 install -m 755 infra/webmail-activate.py /usr/local/sbin/30nice-webmail-activate
 install -m 644 infra/30nice-webmail@.service /etc/systemd/system/30nice-webmail@.service
 systemctl daemon-reload
+install -m 700 infra/mailcloud-backup.sh /usr/local/sbin/30nice-mailcloud-backup
+DEPLOY_STARTED_AT=$(date -u +%s)
+export DEPLOY_STARTED_AT
 pm2 startOrReload infra/ecosystem.config.cjs --update-env
 
 API_OK=0
@@ -71,5 +75,11 @@ done
 [[ "$API_OK" == "1" ]] || { echo "API health check failed after restart." >&2; exit 1; }
 curl --fail --silent --show-error --retry 5 --retry-delay 2 --retry-connrefused --max-time 10 http://127.0.0.1:3012/ -o /dev/null
 
+WORKER_OK=0
+for attempt in {1..20}; do
+  if "$NODE" scripts/check-worker-health.cjs; then WORKER_OK=1; break; fi
+  sleep 2
+done
+[[ "$WORKER_OK" == "1" ]] || { echo "Provisioning worker heartbeat check failed." >&2; exit 1; }
 UPDATED=0
 echo "Deployment succeeded for $EXPECTED_SHA; API and portal health checks passed."

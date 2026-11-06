@@ -19,7 +19,7 @@ export class MailcowService {
     const result=await response.json().catch(()=>[]);
     if(!response.ok) throw new Error(`Mailcow API HTTP ${response.status}`);
     const items=Array.isArray(result)?result:[result];
-    if(items.some((item:{type?:string}|null)=>item?.type==='danger'||item?.type==='error')) throw new Error('Mailcow rejected the provisioning request');
+    if(!items.length||items.some((item:{type?:string}|null)=>!item||item.type!=='success')) throw new Error('Mailcow chưa xác nhận thao tác thành công. Cần kiểm tra lại trạng thái.');
     return result;
   }
   async getDkim(domain:string):Promise<{selector:string;value:string}|null>{
@@ -38,7 +38,7 @@ export class MailcowService {
     await this.request('/api/v1/add/dkim',{domains:domain,dkim_selector:'dkim',key_size:2048});
     const created=await this.getDkim(domain);if(!created)throw new Error('Chưa tạo được khóa DKIM');return created;
   }
-  async addDomain(domain:string){return this.request('/api/v1/add/domain',{domain,description:'Managed by 30NICE Mail Cloud',aliases:0,mailboxes:0,quota:0,defquota:3072,maxquota:10240,relay_all_recipients:0,relay_unknown_only:0,backupmx:0,gal:0,active:1});}
+  async addDomain(domain:string){return this.request('/api/v1/add/domain',{domain,description:'Managed by 30NICE Mail Cloud',aliases:400,mailboxes:10,quota:10240,defquota:3072,maxquota:10240,relay_all_recipients:0,relay_unknown_only:0,backupmx:0,gal:0,active:1});}
   async ensureDomain(domain:string){
     if(this.mode==='mock'||this.mode==='dry-run') return this.addDomain(domain);
     if(!this.baseUrl||!this.apiKey) throw new Error('Mailcow API is not configured');
@@ -51,30 +51,39 @@ export class MailcowService {
     );
     return exists?[{type:'success',msg:'Domain already exists'}]:this.addDomain(domain);
   }
-  async addMailbox(domain:string,localPart:string,quotaGb:number,password:string){return this.request('/api/v1/add/mailbox',{local_part:localPart,domain,password,password2:password,quota:quotaGb*1024,active:1});}
-  async provisionMailbox(domain:string,localPart:string,quotaGb:number,password:string,reconcileExisting=false){
-    if(this.mode!=='production') return this.addMailbox(domain,localPart,quotaGb,password);
-    if(!this.baseUrl||!this.apiKey) throw new Error('Mailcow API is not configured');
-    const address=`${localPart}@${domain}`;
-    const list=async()=>{
-      const response=await fetch(`${this.baseUrl}/api/v1/get/mailbox/all`,{headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(10000)});
-      if(!response.ok) throw new Error(`Mailcow API HTTP ${response.status}`);
-      const result=await response.json().catch(()=>null);
-      if(!Array.isArray(result)) throw new Error('Mailcow returned an invalid mailbox list');
-      return result.some((item:{username?:string}|null)=>item?.username?.toLowerCase()===address.toLowerCase());
-    };
-    const exists=await list();
-    if(exists){
-      if(!reconcileExisting) throw new Error('Mailbox already exists in Mailcow; use retry to reconcile it');
-      return this.editMailbox(address,quotaGb,'active',password);
-    }
-    try { return await this.addMailbox(domain,localPart,quotaGb,password); }
-    catch(error){
-      try { if(await list()) return this.editMailbox(address,quotaGb,'active',password); } catch {}
-      throw error;
-    }
+  async setDomainLimits(domain:string,storageGb:number,mailboxes:number,maxMailboxGb:number){
+    await this.request('/api/v1/edit/domain',{items:[domain],attr:{quota:storageGb*1024,mailboxes,maxquota:maxMailboxGb*1024,defquota:Math.min(3,maxMailboxGb,storageGb)*1024}});
+    if(this.mode==='production'){const d=await this.getDomain(domain);if(!d||Number(d.max_quota_for_domain)!==storageGb*1024**3||Number(d.max_num_mboxes_for_domain)!==mailboxes||Number(d.max_quota_for_mbox)!==maxMailboxGb*1024**3)throw new Error('Chưa xác nhận được hạn mức tên miền.');}
   }
-  async editMailbox(address:string,quotaGb?:number,status?:'active'|'disabled',password?:string){return this.request('/api/v1/edit/mailbox',{username:address,quota:quotaGb===undefined?undefined:quotaGb*1024,active:status===undefined?undefined:status==='disabled'?0:1,password,password2:password});}
+  async addMailbox(domain:string,localPart:string,quotaGb:number,password:string){return this.request('/api/v1/add/mailbox',{local_part:localPart,domain,password,password2:password,quota:quotaGb*1024,active:1});}
+  async getDomains(){
+    if(this.mode!=='production')return [];
+    const r=await fetch(`${this.baseUrl}/api/v1/get/domain/all`,{headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(10000)});
+    if(!r.ok)throw new Error('Không đọc được tên miền từ Mailcow');const data=await r.json();if(data&&typeof data==='object'&&!Array.isArray(data)&&Object.keys(data).length===0)return [];if(!Array.isArray(data))throw new Error('Danh sách tên miền Mailcow không hợp lệ');return data;
+  }
+  async getDomain(domain:string){return (await this.getDomains()).find((d:{domain_name?:string})=>d.domain_name?.toLowerCase()===domain.toLowerCase())??null;}
+  async getMailboxes(domain?:string){
+    if(this.mode!=='production')return [];
+    const r=await fetch(`${this.baseUrl}/api/v1/get/mailbox/all`,{headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(10000)});
+    if(!r.ok)throw new Error('Không đọc được hộp thư từ Mailcow');const data=await r.json();if(data&&typeof data==='object'&&!Array.isArray(data)&&Object.keys(data).length===0)return [];if(!Array.isArray(data))throw new Error('Danh sách hộp thư Mailcow không hợp lệ');
+    return data.map((m:{username:string;quota:number;quota_used:number;active:number})=>{if(typeof m?.username!=='string'||!m.username.includes('@')||!Number.isFinite(Number(m.quota))||Number(m.quota)<0||![0,1].includes(Number(m.active)))throw new Error('Dữ liệu hạn mức Mailcow không hợp lệ.');return {address:m.username.toLowerCase(),quotaBytes:Number(m.quota),usedBytes:Number(m.quota_used)||0,active:Number(m.active)===1};}).filter(m=>!domain||m.address.endsWith('@'+domain.toLowerCase()));
+  }
+  async provisionMailbox(domain:string,localPart:string,quotaGb:number,password:string,reconcileExisting=false){
+    if(this.mode!=='production')return this.addMailbox(domain,localPart,quotaGb,password);
+    const address=`${localPart}@${domain}`;const exists=async()=> (await this.getMailboxes(domain)).find(m=>m.address===address.toLowerCase());
+    if(await exists()){if(!reconcileExisting)throw new Error('Hộp thư đã có trong Mailcow. Hãy đối soát trước khi tạo.');return {reconciled:true};}
+    try{await this.addMailbox(domain,localPart,quotaGb,password);}catch(error){if(await exists())return {reconciled:true};throw error;}
+    const confirmed=await exists();if(!confirmed)throw new Error('Mailcow chưa hiển thị hộp thư vừa tạo.');
+    return {reconciled:false};
+  }
+  async editMailbox(address:string,quotaGb?:number,status?:'active'|'disabled',password?:string){
+    const result=await this.request('/api/v1/edit/mailbox',{items:[address],attr:{quota:quotaGb===undefined?undefined:quotaGb*1024,active:status===undefined?undefined:status==='disabled'?0:1,password,password2:password}});
+    if(this.mode==='production'&&(quotaGb!==undefined||status!==undefined)){
+      const found=(await this.getMailboxes(address.split('@')[1])).find(m=>m.address===address.toLowerCase());
+      if(!found||(quotaGb!==undefined&&found.quotaBytes!==quotaGb*1024**3)||(status!==undefined&&found.active!==(status==='active')))throw new Error('Mailcow chưa khớp cấu hình yêu cầu; cần đối soát lại.');
+    }
+    return result;
+  }
   private async findAlias(address:string,destination:string){
     if(this.mode!=='production') return null;
     if(!this.baseUrl||!this.apiKey) throw new Error('Mailcow API is not configured');

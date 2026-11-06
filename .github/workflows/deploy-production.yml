@@ -32,6 +32,17 @@ jobs:
       VPS_KNOWN_HOSTS: ${{ secrets.MAILCLOUD_VPS_KNOWN_HOSTS }}
       VPS_SSH_PORT: ${{ vars.MAILCLOUD_VPS_SSH_PORT || '22' }}
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: integration-only-password
+          POSTGRES_DB: mailcloud_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - name: Check out the exact main revision
         uses: actions/checkout@v4
@@ -64,6 +75,8 @@ jobs:
         run: npm run test:auth
 
       - name: Verify mailbox and tenant provisioning
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:integration-only-password@127.0.0.1:5432/mailcloud_test
         run: |
           npm run test:mailbox
           npm run test:domain

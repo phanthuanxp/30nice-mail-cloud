@@ -36,13 +36,14 @@ async function main() {
     ]) await assert.rejects(service.createMember('tenant-test', input), BadRequestException);
     assert.equal(writes.length, beforeMemberWrites, 'invalid member roles and credentials must not reach storage');
     const memberWrites = [];
-    const memberService = new MailCloudService({ query: async (sql, values) => {
+    const memberQuery = async (sql, values) => {
       if (sql.startsWith('insert into tenant_members')) {
         memberWrites.push(values);
         return [{ id: 'member-test', tenantId: values[0], email: values[1], role: values[3], status: 'active' }];
       }
       return [];
-    } }, {});
+    };
+    const memberService = new MailCloudService({ query: memberQuery, transaction: async fn => fn(memberQuery) }, {});
     for (const role of [undefined, 'tenant_admin', 'mailbox_user']) {
       const member = await memberService.createMember('tenant-test', { email: ' User@Example.com ', password: 'valid-password-123', role }, 'owner@example.com');
       assert.equal(member.email, 'user@example.com');
