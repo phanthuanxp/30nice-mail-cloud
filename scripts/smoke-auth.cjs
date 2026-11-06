@@ -124,12 +124,32 @@ async function main() {
   process.env.CONTROL_PLANE_ADMIN_PASSWORD = 'smoke-admin-password';
   const salt = 'test-salt';
   const passwordHash = `scrypt$${salt}$${scryptSync('tenant-user-password', salt, 32).toString('hex')}`;
+  const extraSalt = '1234567890abcdef1234567890abcdef';
+  const extraHash = `scrypt${extraSalt}${scryptSync('second-admin-test-password', extraSalt, 32).toString('hex')}`;
+  process.env.CONTROL_PLANE_ADDITIONAL_ADMINS_JSON = JSON.stringify([{ email: 'second@example.com', passwordHash: extraHash }]);
   const database = new FakeDatabase();
   database.passwordHash = passwordHash;
   const auth = new AuthService(database);
 
   const admin = await enroll(auth, 'ADMIN@example.com', 'smoke-admin-password', '127.0.0.1');
   assert.equal(auth.verify(`Bearer ${admin.accessToken}`).role, 'super_admin');
+  await expectReject(auth.login('second@example.com', 'wrong-password', '192.0.2.201'), UnauthorizedException);
+  const second = await enroll(auth, 'SECOND@example.com', 'second-admin-test-password', '192.0.2.202');
+  assert.equal((await auth.requireControlPlane(`Bearer ${second.accessToken}`)).role, 'super_admin');
+  assert.equal(auth.verify(`Bearer ${second.accessToken}`).sub, 'second@example.com');
+  assert.notEqual(second.secret, admin.secret, 'system admins must have independent MFA secrets');
+  assert.ok(database.credentials.has('admin:second@example.com'));
+  const secondChallenge = await auth.login('second@example.com', 'second-admin-test-password', '192.0.2.202');
+  assert.equal(secondChallenge.mfaRequired, true);
+  await expectReject(auth.verifyMfa(secondChallenge.challengeToken, admin.recoveryCodes[9]), UnauthorizedException);
+  const secondSession = await auth.verifyMfa(secondChallenge.challengeToken, second.recoveryCodes[0]);
+  assert.equal(auth.requireSuperAdmin(`Bearer ${secondSession.accessToken}`).sub, 'second@example.com');
+  const validExtraConfig = process.env.CONTROL_PLANE_ADDITIONAL_ADMINS_JSON;
+  for (const badConfig of ['invalid-json', '{}', JSON.stringify([{email:'admin@example.com',passwordHash:extraHash}]), JSON.stringify([{email:'x@example.com',passwordHash:'plaintext'}])]) {
+    process.env.CONTROL_PLANE_ADDITIONAL_ADMINS_JSON = badConfig;
+    assert.throws(() => new AuthService(database), /Invalid additional administrator configuration/);
+  }
+  process.env.CONTROL_PLANE_ADDITIONAL_ADMINS_JSON = validExtraConfig;
   const sessionPayload = JSON.parse(Buffer.from(admin.accessToken.split('.')[0], 'base64url').toString('utf8'));
   assert.equal(sessionPayload.secret, undefined, 'enrollment TOTP secret must never enter the session token');
   assert.equal(sessionPayload.kind, undefined, 'temporary MFA challenge metadata must never enter the session token');
