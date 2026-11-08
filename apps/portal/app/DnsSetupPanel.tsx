@@ -42,16 +42,65 @@ export default function DnsSetupPanel({tenantId,domainId,onChanged}:{tenantId:st
  const hasExistingMx = existingMx.length > 0;
  const canShowMx = !hasExistingMx || showMx;
  function download(){if(!data)return;const selected=data.records.filter(r=>(r.id!=='mx'||canShowMx)&&(r.group==='required'||(custom&&r.group==='webmail')));const text=[`HƯỚNG DẪN KẾT NỐI EMAIL — ${data.domain}`,'TTL: 300 giây (5 phút). Chỉ thêm hoặc sửa bản ghi còn thiếu.','Nếu nhà cung cấp tự nối tên miền, dùng tên ngắn; nếu yêu cầu tên đầy đủ, dùng tên đầy đủ.','Giữ SPF/DMARC đang đúng. Hợp nhất nguồn gửi SPF nếu đang dùng dịch vụ khác.','Nếu chuyển dịch vụ: chuẩn bị hộp thư trước, chuyển MX cuối cùng.','',...selected.map(r=>`${data.checks[r.id]?.ok?'ĐÃ ĐÚNG — KHÔNG THÊM LẠI':'CẦN KIỂM TRA'} | ${r.type} | Tên: ${host(r)} | Nội dung: ${value(r)||'Xác minh tên miền để lấy khóa DKIM.'}${r.priority===undefined?'':` | Ưu tiên: ${r.priority}`}\n${r.help}`),'',`Đăng nhập: ${custom?data.webmail.url:'https://mail.30nice.vn'}`,custom?'30NICE sẽ cấp HTTPS sau khi bạn bấm Kiểm tra và tiếp tục.':'Không cần thêm DNS cho webmail chung.'].join('\n');const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=`huong-dan-dns-${data.domain}.txt`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
- function row(r:RecordRow){const check=data!.checks[r.id];const label=check?.ok?'Đã đúng':check?.state==='error'?'Chưa kiểm tra được':check?.state==='review'?'Giá trị cần kiểm tra':'Chưa thấy bản ghi';return <article className="dnsSimpleRecord" key={r.id}><header><span className="dnsType">{r.type}</span><b>{({ownership:'Xác nhận tên miền',mx:'Nhận thư',spf:'Cho phép gửi thư',dkim:'Chữ ký chống giả mạo',dmarc:'Chính sách bảo vệ email',webmail:'Trang đăng nhập riêng'} as Record<string,string>)[r.id]||r.id}</b><span className={check?.ok?'dnsSimpleOk':'dnsSimplePending'}>{check?.ok&&<CheckCircle2 size={15}/>} {label}</span></header><div className="dnsSimpleFields"><div><small>Loại</small><code>{r.type}</code><DnsCopyButton value={r.type} label={`Loại ${r.type}`}/></div><div><small>Tên / Host</small><code>{host(r)}</code><DnsCopyButton value={host(r)} label={`Tên ${r.host}`}/></div><div className="dnsSimpleContent"><small>Nội dung / Giá trị</small><code>{value(r)||'Hệ thống sẽ lấy khóa sau khi xác minh tên miền.'}</code>{value(r)&&<DnsCopyButton value={value(r)} label={`Nội dung ${r.type} ${r.host}`}/>}</div>{r.priority!==undefined&&<div><small>Ưu tiên</small><code>{r.priority}</code><DnsCopyButton value={String(r.priority)} label={`Ưu tiên ${r.host}`}/></div>}</div><p>{r.help}</p>{!check?.ok&&<p className="dnsSimpleDetail">{check?.message}{!!check?.actual?.length&&<span>Đang thấy: {check.actual.join(' | ')}</span>}</p>}</article>;}
- function records(ids:string[]){const rows=ids.flatMap(id=>data!.records.filter(r=>r.id===id));const done=rows.filter(r=>data!.checks[r.id]?.ok),pending=rows.filter(r=>!data!.checks[r.id]?.ok);return <>{pending.map(row)}{!!done.length&&<details className="dnsSimpleDone"><summary><CheckCircle2 size={16}/> {done.length} bản ghi đã đúng — không cần thêm lại</summary>{done.map(row)}</details>}</>;}
+ function row(record:RecordRow){
+  const check=data!.checks[record.id];
+  const title=({
+   ownership:'Xác minh quyền sở hữu',
+   mx:'Máy chủ nhận thư (MX)',
+   spf:'Nguồn gửi được phép (SPF)',
+   dkim:'Chữ ký email (DKIM)',
+   dmarc:'Chống giả mạo email (DMARC)',
+   webmail:'Địa chỉ webmail riêng',
+   autoconfig:'Cấu hình tự động (Autoconfig)',
+   autodiscover:'Cấu hình Outlook (Autodiscover)',
+  } as Record<string,string>)[record.id]||record.id;
+  const label=check?.ok?'Đã đúng':check?.state==='error'?'Chưa kiểm tra được':check?.state==='review'?'Cần kiểm tra giá trị':'Chưa tìm thấy';
+  const recordValue=value(record);
+  const heading=<><span className="dnsType" aria-label={`Loại ${record.type}`}>{record.type}</span><b>{title}</b></>;
+  const fields=<div className="dnsSimpleFields">
+   <div>
+    <small>Tên (Host)</small>
+    <code>{host(record)}</code>
+    <DnsCopyButton key={host(record)} value={host(record)} label={`Tên ${record.host}`}/>
+   </div>
+   <div className="dnsSimpleContent">
+    <small>Giá trị</small>
+    <code>{recordValue||'Khóa sẽ có sau khi xác minh tên miền.'}</code>
+    {recordValue&&<DnsCopyButton key={recordValue} value={recordValue} label={`Nội dung ${record.type} ${record.host}`}/>}
+   </div>
+   {record.priority!==undefined&&<div className="dnsSimplePriority"><small>Ưu tiên</small><code>{record.priority}</code></div>}
+  </div>;
+  if(check?.ok)return <details className="dnsVerifiedRecord" key={record.id}>
+   <summary><span className="dnsRecordHeading">{heading}</span><code>{host(record)}</code></summary>
+   {fields}
+  </details>;
+  return <article className="dnsSimpleRecord" key={record.id}>
+   <div className="dnsRecordHeading">{heading}<span className="dnsSimplePending">{label}</span></div>
+   {fields}
+   <p>{record.help}</p>
+   {(check?.message||!!check?.actual?.length)&&<p className="dnsSimpleDetail">{check.message}{!!check.actual?.length&&<span>DNS hiện tại: {check.actual.join(' | ')}</span>}</p>}
+  </article>;
+ }
+ function records(ids:string[]){
+  const rows=ids.flatMap(id=>data!.records.filter(record=>record.id===id));
+  const done=rows.filter(record=>data!.checks[record.id]?.ok);
+  const pending=rows.filter(record=>!data!.checks[record.id]?.ok);
+  return <>
+   {pending.map(row)}
+   {!!done.length&&<details className="dnsSimpleDone">
+    <summary><CheckCircle2 size={16}/> {done.length} bản ghi đã đúng</summary>
+    <div className="dnsVerifiedList">{done.map(row)}</div>
+   </details>}
+  </>;
+ }
  const owned=data?.status==='verified',mailReady=!!data&&complete(data),running=!!data&&(data.webmail.activation.state==='running'||activationStarted.current>0&&!data.webmail.ready&&Date.now()-activationStarted.current<600000&&!(data.webmail.activation.state==='failed'&&Date.parse(data.webmail.activation.updatedAt||'')>=activationStarted.current));
- return <section className="dnsSetup dnsSimple" aria-label="Hướng dẫn DNS tên miền"><div className="dnsSetupTop"><div><h3>Kết nối email cho {data?.domain||'tên miền'}</h3><p>Làm theo ba bước. Bản ghi đã đúng được giữ nguyên.</p></div><button className="ghost" disabled={busy||!data} onClick={download}><Download size={16}/> Tải hướng dẫn</button></div>
+ return <section className="dnsSetup dnsSimple" aria-label="Hướng dẫn DNS tên miền"><div className="dnsSetupTop"><div><h3>Kết nối email cho {data?.domain||'tên miền'}</h3><p>Thêm các bản ghi được yêu cầu tại nơi quản lý tên miền, rồi bấm kiểm tra.</p></div><button className="ghost" disabled={busy||!data} onClick={download}><Download size={16}/> Tải hướng dẫn</button></div>
  <nav className="dnsSimpleSteps" aria-label="Các bước kết nối DNS">{['Xác nhận tên miền','Bật email doanh nghiệp','Chọn trang đăng nhập'].map((label,i)=><button type="button" key={label} disabled={busy||i>0&&!owned} aria-current={step===i+1?'step':undefined} onClick={()=>{setStep(i+1);setMessage('');}}><span>{(i===0&&owned)||(i===1&&mailReady)?'✓':i+1}</span>{label}</button>)}</nav>
  {error&&<p className="dnsSetupError" role="alert">{error}</p>}{message&&<p className="dnsSetupNotice" role="status">{message}</p>}
  {!data?<p role="status">{busy?'Đang đọc cấu hình tên miền…':'Chưa tải được cấu hình.'}</p>:<>
- <div className="dnsSimpleProvider"><label>Nơi quản lý DNS<select value={provider} disabled={busy} onChange={e=>{setProvider(e.target.value);setFullHost(false);}}><option value="other">Nhà cung cấp khác / Chưa rõ</option><option value="cloudflare">Cloudflare</option></select></label><label className="dnsSimpleCheckbox"><input type="checkbox" checked={fullHost} onChange={e=>setFullHost(e.target.checked)}/> Nhà cung cấp yêu cầu tên đầy đủ</label><p>{provider==='cloudflare'?'Mở tên miền trong Cloudflare → DNS → Records → Add record. Chọn DNS only cho các bản ghi CNAME bên dưới.':'Mở nơi quản lý tên miền → Quản lý DNS → Thêm bản ghi. Nhập các ô tương ứng bên dưới.'} TTL chọn 300 giây hoặc mặc định. Nếu nhà cung cấp tự nối đuôi tên miền, dùng tên ngắn.</p></div>
+ <div className="dnsSimpleProvider"><label>Nơi quản lý DNS<select value={provider} disabled={busy} onChange={e=>{setProvider(e.target.value);setFullHost(false);}}><option value="other">Nhà cung cấp khác / Chưa rõ</option><option value="cloudflare">Cloudflare</option></select></label><label className="dnsSimpleCheckbox"><input type="checkbox" checked={fullHost} onChange={e=>setFullHost(e.target.checked)}/> Hiển thị tên DNS đầy đủ</label><p>{provider==='cloudflare'?'Mở tên miền trong Cloudflare → DNS → Records → Add record. Chọn DNS only cho các bản ghi CNAME bên dưới.':'Mở nơi quản lý tên miền → Quản lý DNS → Thêm bản ghi. Nhập các ô tương ứng bên dưới.'} Chọn TTL 5 phút hoặc để mặc định. Dùng tên ngắn nếu trang DNS tự thêm đuôi tên miền.</p></div>
  {step===1&&<div className="dnsSetupGroup"><h4>1. Xác nhận bạn quản lý tên miền</h4><p>Thêm một bản TXT, sau đó bấm “Kiểm tra và tiếp tục”. 30NICE tự kết nối dịch vụ và lấy khóa ký thư.</p>{owned?<div className="dnsSetupNotice"><CheckCircle2 size={18}/> Tên miền đã xác minh. Không cần xác minh lại.</div>:records(['ownership'])}{!owned&&!data.records.some(r=>r.id==='ownership')&&<p>Bấm “Kiểm tra và tiếp tục” để tạo mã xác minh riêng.</p>}</div>}
- {step===2&&<div className="dnsSetupGroup"><h4>2. Bật gửi và nhận email doanh nghiệp</h4><p>Chỉ thêm hoặc sửa các bản ghi còn hiển thị. Không tạo thêm SPF nếu tên miền đã có một bản SPF.</p>{data.provisioningStatus!=='ready'&&<p className="dnsSetupNotice">Bấm “Kiểm tra và tiếp tục” để hệ thống kết nối dịch vụ và chuẩn bị khóa DKIM.</p>}{hasExistingMx && <div className="dnsSetupNotice">
+ {step===2&&<div className="dnsSetupGroup"><h4>2. Bật gửi và nhận email doanh nghiệp</h4><p>Sao chép Tên và Giá trị sang trang DNS. Nếu đã có SPF, hãy cập nhật bản ghi hiện tại.</p>{data.provisioningStatus!=='ready'&&<p className="dnsSetupNotice">Bấm “Kiểm tra và tiếp tục” để hệ thống kết nối dịch vụ và chuẩn bị khóa DKIM.</p>}{hasExistingMx && <div className="dnsSetupNotice">
   <Info size={18}/>
   <div>
    <b>Đã phát hiện MX hiện tại</b>
