@@ -1,0 +1,17 @@
+export const dnsProviders = [
+ {id:'pavietnam', name:'P.A Việt Nam', steps:'Đăng nhập cổng hỗ trợ P.A Việt Nam, chọn tên miền và mở mục quản lý DNS.', url:'https://support.pavietnam.vn/'},
+ {id:'matbao', name:'Mắt Bão', steps:'Trong tài khoản Mắt Bão, chọn tên miền và mở Quản lý bản ghi DNS.', url:'https://wiki.matbao.net/kb/quan-ly-ban-ghi-dns/'},
+ {id:'inet', name:'iNET', steps:'Trong OnePortal, mở tên miền rồi chọn Cập nhật bản ghi trong mục Nameserver và bản ghi.', url:'https://developers.inet.vn/docs/oneportal/quan-ly-ban-ghi-dns'},
+ {id:'nhanhoa', name:'Nhân Hòa (ZoneDNS)', steps:'Đăng nhập ZoneDNS, chọn tên miền và thêm bản ghi trong danh sách DNS. Dùng tên ngắn khi ô tên đã có sẵn đuôi tên miền.', url:'https://zonedns.vn/'},
+ {id:'tenten', name:'TENTEN (GMO-Z.com)', steps:'Mở tên miền trong trang quản trị TENTEN, vào phần quản lý DNS và thêm bản ghi.', url:'https://tenten.vn/tin-tuc/cap-nhat-ban-ghi-ten-mien/'},
+ {id:'azdigi', name:'AZDIGI', steps:'Mở AZDIGI DNS, chọn tên miền và thêm bản ghi trong vùng DNS.', url:'https://azdigi.com/blog/huong-dan/ten-mien/huong-dan-azdigi-dns'},
+ {id:'bkns', name:'BKNS', steps:'Trong trang quản trị BKNS, chọn tên miền, mở tab DNS và chọn Add Record.', url:'https://bkns.vn/vi/kien-thuc/quan-ly-dns'},
+ {id:'esc', name:'ESC', steps:'Trong trang thành viên ESC, chọn tên miền và mở công cụ quản lý DNS.', url:'https://www.esc.vn/huong-dan-dung-cong-cu-quan-ly-dns-trong-member'},
+ {id:'fpt', name:'FPT Telecom International (FTI)', steps:'Mở cổng quản trị tên miền FTI, chọn tên miền và vào phần quản lý bản ghi DNS.', url:'https://ods.fpt.net/dich-vu/domain.html'},
+ {id:'tino', name:'Tino (TinoHost)', steps:'Trong trang quản trị Tino, mở tên miền rồi vào phần quản lý DNS để thêm bản ghi.', url:'https://tino.vn/blog/docs/cach-quan-ly-dns-tren-ten-mien-tai-tino/'},
+ {id:'vietnix', name:'Vietnix', steps:'Chọn tên miền trong trang quản trị Vietnix và mở phần cấu hình DNS.', url:'https://vietnix.vn/cau-hinh-dns-cho-domain/'},
+ {id:'viettel', name:'Viettel IDC', steps:'Nếu tên miền đang dùng DNS của Viettel IDC, mở vùng DNS tương ứng trong cổng quản trị dịch vụ để thêm bản ghi.', url:'https://www.viettelidc.com.vn/tin-tuc/nameserver-la-gi-cach-hoat-dong-kiem-tra-va-thay-doi-nameserver-5921'},
+ {id:'vinahost', name:'VinaHost', steps:'Mở DNS Manager của VinaHost, chọn tên miền và thêm bản ghi.', url:'https://kb.vinahost.vn/huong-dan-su-dung-dns-manager-va-quan-ly-ten-mien-tai-vinahost/'},
+ {id:'vnpt', name:'VNPT Domain', steps:'Mở trang quản trị VNPT Domain, chọn tên miền và vào phần quản lý bản ghi DNS.', url:'https://vnpt.vn/doanh-nghiep/san-pham-dich-vu/dich-vu-dang-ky-ten-mien-vnpt-domain/'},
+ {id:'123host', name:'123HOST', steps:'Trong trang khách hàng 123HOST, chọn tên miền và mở phần quản lý DNS để thêm bản ghi.', url:'https://123host.vn/tailieu/kb/ten-mien/huong-dan-quan-ly-ten-mien-tai-123host.html'},
+];
