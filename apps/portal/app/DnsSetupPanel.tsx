@@ -2,6 +2,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {CheckCircle2,Info,RefreshCw,Download,ExternalLink} from 'lucide-react';
 import DnsCopyButton from './DnsCopyButton';
+import {dnsProviders} from './dns-providers';
 import './dns-setup.css';
 type Check={ok:boolean;state:string;message:string;actual:string[]};
 type RecordRow={id:string;type:string;host:string;value:string;group:'required'|'webmail'|'optional';help:string;priority?:number};
@@ -93,12 +94,32 @@ export default function DnsSetupPanel({tenantId,domainId,onChanged}:{tenantId:st
    </details>}
   </>;
  }
+ const selectedProvider = dnsProviders.find(option => option.id === provider);
  const owned=data?.status==='verified',mailReady=!!data&&complete(data),running=!!data&&(data.webmail.activation.state==='running'||activationStarted.current>0&&!data.webmail.ready&&Date.now()-activationStarted.current<600000&&!(data.webmail.activation.state==='failed'&&Date.parse(data.webmail.activation.updatedAt||'')>=activationStarted.current));
  return <section className="dnsSetup dnsSimple" aria-label="Hướng dẫn DNS tên miền"><div className="dnsSetupTop"><div><h3>Kết nối email cho {data?.domain||'tên miền'}</h3><p>Thêm các bản ghi được yêu cầu tại nơi quản lý tên miền, rồi bấm kiểm tra.</p></div><button className="ghost" disabled={busy||!data} onClick={download}><Download size={16}/> Tải hướng dẫn</button></div>
  <nav className="dnsSimpleSteps" aria-label="Các bước kết nối DNS">{['Xác nhận tên miền','Bật email doanh nghiệp','Chọn trang đăng nhập'].map((label,i)=><button type="button" key={label} disabled={busy||i>0&&!owned} aria-current={step===i+1?'step':undefined} onClick={()=>{setStep(i+1);setMessage('');}}><span>{(i===0&&owned)||(i===1&&mailReady)?'✓':i+1}</span>{label}</button>)}</nav>
  {error&&<p className="dnsSetupError" role="alert">{error}</p>}{message&&<p className="dnsSetupNotice" role="status">{message}</p>}
  {!data?<p role="status">{busy?'Đang đọc cấu hình tên miền…':'Chưa tải được cấu hình.'}</p>:<>
- <div className="dnsSimpleProvider"><label>Nơi quản lý DNS<select value={provider} disabled={busy} onChange={e=>{setProvider(e.target.value);setFullHost(false);}}><option value="other">Nhà cung cấp khác / Chưa rõ</option><option value="cloudflare">Cloudflare</option></select></label><label className="dnsSimpleCheckbox"><input type="checkbox" checked={fullHost} onChange={e=>setFullHost(e.target.checked)}/> Hiển thị tên DNS đầy đủ</label><p>{provider==='cloudflare'?'Mở tên miền trong Cloudflare → DNS → Records → Add record. Chọn DNS only cho các bản ghi CNAME bên dưới.':'Mở nơi quản lý tên miền → Quản lý DNS → Thêm bản ghi. Nhập các ô tương ứng bên dưới.'} Chọn TTL 5 phút hoặc để mặc định. Dùng tên ngắn nếu trang DNS tự thêm đuôi tên miền.</p></div>
+ <div className="dnsSimpleProvider">
+  <label>Nơi quản lý DNS
+   <select aria-label="Nơi quản lý DNS" value={provider} disabled={busy} onChange={event=>{setProvider(event.target.value);setFullHost(false);}}>
+    <option value="other">Nhà cung cấp khác / Chưa rõ</option>
+    <optgroup label="Việt Nam">
+     {dnsProviders.map(option=><option key={option.id} value={option.id}>{option.name}</option>)}
+    </optgroup>
+    <optgroup label="Quốc tế"><option value="cloudflare">Cloudflare</option></optgroup>
+   </select>
+  </label>
+  <label className="dnsSimpleCheckbox"><input type="checkbox" checked={fullHost} onChange={event=>setFullHost(event.target.checked)}/> Hiển thị tên DNS đầy đủ</label>
+  <p>Chọn nơi đang quản lý DNS của tên miền. Đây có thể là nơi khác với nhà đăng ký.</p>
+  <p>
+   {selectedProvider?.steps ?? (provider==='cloudflare'
+    ? 'Mở tên miền trong Cloudflare → DNS → Records → Add record. Chọn DNS only cho các bản ghi CNAME bên dưới.'
+    : 'Mở trang quản lý DNS của tên miền và chọn Thêm bản ghi.')}
+   {' '}Chọn TTL 5 phút hoặc để mặc định. Dùng tên ngắn nếu trang DNS tự thêm đuôi tên miền.
+   {selectedProvider&&<> <a href={selectedProvider.url} target="_blank" rel="noopener noreferrer">Xem trang chính thức của {selectedProvider.name}</a></>}
+  </p>
+ </div>
  {step===1&&<div className="dnsSetupGroup"><h4>1. Xác nhận bạn quản lý tên miền</h4><p>Thêm một bản TXT, sau đó bấm “Kiểm tra và tiếp tục”. 30NICE tự kết nối dịch vụ và lấy khóa ký thư.</p>{owned?<div className="dnsSetupNotice"><CheckCircle2 size={18}/> Tên miền đã xác minh. Không cần xác minh lại.</div>:records(['ownership'])}{!owned&&!data.records.some(r=>r.id==='ownership')&&<p>Bấm “Kiểm tra và tiếp tục” để tạo mã xác minh riêng.</p>}</div>}
  {step===2&&<div className="dnsSetupGroup"><h4>2. Bật gửi và nhận email doanh nghiệp</h4><p>Sao chép Tên và Giá trị sang trang DNS. Nếu đã có SPF, hãy cập nhật bản ghi hiện tại.</p>{data.provisioningStatus!=='ready'&&<p className="dnsSetupNotice">Bấm “Kiểm tra và tiếp tục” để hệ thống kết nối dịch vụ và chuẩn bị khóa DKIM.</p>}{hasExistingMx && <div className="dnsSetupNotice">
   <Info size={18}/>
