@@ -1,0 +1,60 @@
+.mailOverview { display: grid; gap: 20px; min-width: 0; color: #172b46; }
+.overviewHero {
+ display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end;
+ gap: 20px; padding: clamp(20px,4vw,36px); border-radius: 18px;
+ background: linear-gradient(115deg,#0d254a,#214d85); color: #fff;
+}
+.overviewHero h1 { margin: 8px 0; font-size: clamp(25px,4vw,38px); line-height: 1.16; color: inherit; }
+.overviewHero p { margin: 0; color: #dce9fc; line-height: 1.5; }
+.overviewEyebrow { color: #b4cff8; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
+.overviewHeroActions { display: flex; flex-wrap: wrap; gap: 8px; }
+.overviewHeroActions button { display: inline-flex; align-items: center; gap: 7px; min-height: 42px; }
+.overviewRefresh { border: 1px solid #8babd0; border-radius: 9px; background: #ffffff12; color: #fff; padding: 9px 12px; }
+.overviewRefresh:disabled { opacity: .65; }
+.overviewMetrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
+.overviewMetric, .overviewCard { border: 1px solid #e2e9f3; background: #fff; border-radius: 14px; min-width: 0; }
+.overviewMetric {
+ position: relative; display: grid; justify-items: start; gap: 7px; padding: 17px;
+ text-align: left; color: #304663; font: inherit;
+}
+.overviewMetric:hover, .overviewTask:hover { border-color: #8aaee0; background: #f7faff; }
+.overviewIcon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: #ebf2ff; color: #2863b5; }
+.overviewMetricArrow { position: absolute; top: 19px; right: 16px; color: #4f6e94; }
+.overviewMetric strong { color: #162f52; font-size: 30px; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.overviewMetric small, .overviewMeta, .overviewTask small { color: #52667f; font-size: 12px; line-height: 1.5; }
+.overviewColumns { display: grid; grid-template-columns: minmax(0,1.12fr) minmax(0,1fr); align-items: start; gap: 14px; }
+.overviewCard { padding: clamp(14px,2.5vw,22px); }
+.overviewCardTitle { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.overviewCardTitle h2 { font-size: 17px; margin: 0; }
+.overviewCard p { font-size: 13px; line-height: 1.55; }
+.overviewClear { display: flex; align-items: center; gap: 8px; color: #166343; }
+.overviewClear svg, .overviewMeta svg { flex-shrink: 0; }
+.overviewTask {
+ display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center;
+ width: 100%; text-align: left; margin: 8px 0; padding: 10px; border: 1px solid #e5ecf5;
+ background: #fff; color: #253e5e; border-radius: 10px;
+}
+.overviewTaskCount { min-width: 28px; padding: 5px; border-radius: 7px; background: #fff2d5; color: #814d08; font-weight: 700; text-align: center; }
+.overviewTask small { display: block; margin-top: 3px; }
+.overviewService { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid #edf1f7; font-size: 13px; }
+.overviewService > b { flex: 1; }
+.overviewBadge { border-radius: 20px; padding: 4px 8px; background: #edf1f6; color: #3e536d; font-size: 11px; font-weight: 650; }
+.overviewBadge[data-tone="good"] { background: #e6f7ec; color: #146443; }
+.overviewBadge[data-tone="warning"] { background: #fff2d5; color: #814d08; }
+.overviewMeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.overviewLink { display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; }
+.overviewProgress { margin-top: 17px; font-size: 12px; }
+.overviewProgress div { display: flex; justify-content: space-between; gap: 8px; }
+.overviewProgress progress { width: 100%; height: 10px; accent-color: #2871c5; }
+.mailOverview button:focus-visible { outline: 3px solid #77a9ef; outline-offset: 3px; }
+@media (max-width: 930px) { .overviewColumns { grid-template-columns: 1fr; } }
+@media (max-width: 460px) {
+ .mailOverview { gap: 12px; }
+ .overviewMetrics { grid-template-columns: 1fr; gap: 8px; }
+ .overviewMetric { grid-template-columns: auto minmax(0,1fr) auto; align-items: center; column-gap: 10px; padding: 12px; }
+ .overviewMetric strong { font-size: 24px; }
+ .overviewMetric small { grid-column: 2 / -1; }
+ .overviewMetricArrow { display: none; }
+}
+
+.overviewRecent { margin-top: 20px; }
