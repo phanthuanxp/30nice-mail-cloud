@@ -102,7 +102,7 @@ export default function DnsSetupPanel({tenantId,domainId,onChanged}:{tenantId:st
  {!data?<p role="status">{busy?'Đang đọc cấu hình tên miền…':'Chưa tải được cấu hình.'}</p>:<>
  <div className="dnsSimpleProvider">
   <label>Nơi quản lý DNS
-   <select value={provider} disabled={busy} onChange={event=>{setProvider(event.target.value);setFullHost(false);}}>
+   <select aria-label="Nơi quản lý DNS" value={provider} disabled={busy} onChange={event=>{setProvider(event.target.value);setFullHost(false);}}>
     <option value="other">Nhà cung cấp khác / Chưa rõ</option>
     <optgroup label="Việt Nam">
      {dnsProviders.map(option=><option key={option.id} value={option.id}>{option.name}</option>)}
