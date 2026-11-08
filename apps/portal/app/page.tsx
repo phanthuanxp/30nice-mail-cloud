@@ -9,7 +9,6 @@ import {
   Settings,
   ShieldCheck,
   Server,
-  Search,
   Plus,
   ArrowUpRight,
   AlertTriangle,
@@ -18,7 +17,6 @@ import {
 } from "lucide-react";
 import DomainWizard from "./DomainWizard";
 import AuthGate from "./AuthGate";
-import TenantCreateForm from "./TenantCreateForm";
 import {CustomerProvider,useCustomer} from './CustomerContext';
 import {CustomerWorkspace,ServicePlans,OperationsPanel,SecurityPanel} from './ProductPanels';
 import DnsHealthPanel from "./DnsHealthPanel";
@@ -27,10 +25,12 @@ import MailboxPanel from "./MailboxPanel";
 import AliasPanel from "./AliasPanel";
 import OnboardingPanel from "./OnboardingPanel";
 import OverviewPanel, {type OverviewTenant} from "./OverviewPanel";
+import CustomersPanel from "./CustomersPanel";
 type Tenant = OverviewTenant & {
   id: string;
   name: string;
   slug: string;
+  domains: string[];
   created_at?: string;
 };
 type HealthSnapshot = { productionReady?: boolean; environment?: string; database?: { configured?: boolean; connected?: boolean }; mailcow?: { mode?: string; configured?: boolean; healthy?: boolean; httpStatus?: number } };
@@ -54,8 +54,6 @@ function Dashboard() {
   const [viewer,setViewer]=useState<{email:string;role:string}|null>(null);
   useEffect(()=>{let live=true;fetch('/api/api/v1/auth/me').then(r=>r.ok?r.json():null).then(d=>{if(live)setViewer(d);}).catch(()=>{if(live)setViewer(null);});return()=>{live=false;};},[]);
   const [active, setActive] = useState("Tổng quan");
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("Tất cả");
   const [data, setData] = useState<Tenant[]>(tenants);
   const [tenantRefresh, setTenantRefresh] = useState(0);
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
@@ -88,6 +86,7 @@ function Dashboard() {
               domain: domains[0]?.domain ?? "Chưa có tên miền",
               mailboxes: mailboxes.length,
               domainCount: domains.length,
+              domains: domains.map(item => item.domain as string),
               verifiedDomains: domains.filter(domain => domain.status === "verified").length,
               disconnectedDomains: domains.filter(domain => domain.status === "verified" && domain.provisioningStatus !== "ready").length,
               mailboxIssues: mailboxes.filter(box => ["failed", "reconcile"].includes(box.provisioningState)).length,
@@ -134,11 +133,6 @@ function Dashboard() {
   const mailBackendOnline = health?.mailcow?.healthy;
   const controlPlaneReady = health?.productionReady === true && databaseOnline === true && mailBackendOnline === true;
   const serviceText = (online: boolean | undefined) => online === undefined ? (healthLoading ? "Đang kiểm tra" : "Chưa xác minh") : online ? "Đang hoạt động" : "Không kết nối";
-  const shown = data.filter(
-    (t) =>
-      (filter === "Tất cả" || t.status === filter) &&
-      `${t.name} ${t.domain}`.toLowerCase().includes(query.toLowerCase()),
-  );
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -205,7 +199,7 @@ function Dashboard() {
           </div>
         </header>
         <div className="content">
-          {active !== "Tổng quan" && (
+          {active !== "Tổng quan" && active !== "Khách hàng" && (
           <div className="pagetop">
             <div>
               <div className="eyebrow">
@@ -250,6 +244,16 @@ function Dashboard() {
               <CustomerTable data={data.slice(-5).reverse()} />
             </section>}
             </>
+          ) : active === "Khách hàng" ? (
+            <CustomersPanel
+              customers={data}
+              loading={tenantLoading}
+              failed={tenantLoadError}
+              canCreate={viewer?.role === "super_admin"}
+              onContactSaved={(id,name) => setData(current => current.map(item => item.id === id ? {...item,name} : item))}
+              onRefresh={() => setTenantRefresh(value => value + 1)}
+              onNavigate={setActive}
+            />
           ) : (
             <section className="panel">
               <div className="sectionTitle">
@@ -272,31 +276,6 @@ function Dashboard() {
                 <MemberPanel />
               ) : active === "Hộp thư" ? (
                 <MailboxPanel />
-              ) : active === "Khách hàng" ? (
-                <>
-                  {viewer?.role==='super_admin'&&<TenantCreateForm onCreated={t => {customer.selectTenant(t.id);setTenantRefresh(value => value + 1);}} />}
-                  <CustomerWorkspace />
-                  <div className="tools">
-                    <div className="search">
-                      <Search size={16} />
-                      <input
-                        placeholder="Tìm khách hàng hoặc tên miền..."
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                      />
-                    </div>
-                    <select
-                      value={filter}
-                      onChange={(e) => setFilter(e.target.value)}
-                    >
-                      <option>Tất cả</option>
-                      <option>Đã xác minh</option>
-                      <option>Chờ xác minh</option>
-                    </select>
-                  </div>
-                  {tenantLoadError && <div role="alert" className="empty"><AlertTriangle size={22} /><h3>Không tải được danh sách khách hàng</h3><p>Kiểm tra phiên đăng nhập hoặc kết nối API rồi tải lại trang.</p></div>}
-                  {!tenantLoadError && <CustomerTable data={shown} />}
-                </>
               ) : active === "Gói dịch vụ" ? (<ServicePlans />) : active === "Máy chủ" ? (<OperationsPanel />) : active === "Bảo mật" ? (<SecurityPanel />) : active === "Cài đặt" ? (<CustomerWorkspace />) : (
                 <div className="empty">
                   <AlertTriangle size={26} />

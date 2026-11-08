@@ -1,0 +1,27 @@
+.customerDirectory { display:grid; gap:18px; min-width:0; color:#172b46; }
+.customerHero {
+ display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:16px;
+ padding:clamp(20px,4vw,34px); border-radius:18px; background:linear-gradient(115deg,#0d254a,#214d85); color:#fff;
+}
+.customerHero h1 { margin:6px 0; font-size:clamp(26px,4vw,36px); color:inherit; }
+.customerHero p { margin:0; color:#dce9fc; line-height:1.5; }
+.customerSurface { padding:clamp(14px,2.5vw,22px); background:#fff; border:1px solid #e2e9f3; border-radius:14px; min-width:0; }
+.customerSectionHead, .customerActions, .customerCardHeading { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.customerSectionHead { justify-content:space-between; margin-bottom:14px; }
+.customerSectionHead h2 { margin:0; font-size:18px; overflow-wrap:anywhere; }
+.customerActions button { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-height:36px; }
+.customerSearchBar { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; margin-bottom:14px; }
+.customerSearchBar label { display:grid; gap:6px; min-width:0; color:#304663; font-size:13px; }
+.customerSearchField, .customerSearchBar select { border:1px solid #d8e3f1; border-radius:8px; padding:9px 10px; min-width:0; background:#fff; }
+.customerSearchField { display:flex; align-items:center; gap:8px; }
+.customerSearchField svg { flex-shrink:0; }
+.customerSearchField input { width:100%; min-width:0; border:0; color:inherit; }
+.customerGrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.customerCard { display:grid; gap:10px; padding:14px; border:1px solid #e2e9f3; border-radius:12px; min-width:0; }
+.customerCard[data-selected="true"] { border-color:#75a5e8; background:#f7faff; }
+.customerCardHeading h3 { font-size:15px; margin:0; flex:1; min-width:100px; overflow-wrap:anywhere; }
+.customerDomains { display:flex; flex-wrap:wrap; list-style:none; gap:6px; padding:0; margin:0; }
+.customerDomains li { max-width:100%; overflow-wrap:anywhere; padding:4px 7px; border-radius:6px; background:#edf3fa; font-size:12px; }
+.customerDirectory button:focus-visible, .customerDirectory input:focus-visible, .customerDirectory select:focus-visible { outline:3px solid #77a9ef; outline-offset:2px; }
+@media(max-width:850px) { .customerGrid { grid-template-columns:1fr; } }
+@media(max-width:520px) { .customerSearchBar { grid-template-columns:1fr; } }
