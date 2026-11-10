@@ -5,3 +5,22 @@
 
 .provisioningHistory{display:grid;gap:8px;padding:16px;border:1px solid #e6ebf2;border-radius:10px;background:#fff}.provisioningHistoryHeader{display:flex;align-items:center;justify-content:space-between;gap:10px}.provisioningHistoryHeader h3{margin:0;color:#35445b;font-size:14px}.provisioningHistoryHeader p{margin:5px 0 0;color:#8793a4;font-size:11px}.provisioningHistoryEmpty,.provisioningHistoryError{margin:3px 0;color:#8490a1;font-size:12px}.provisioningHistoryError,.provisioningJobError{color:#a33333}.provisioningJobRow{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid #edf0f4}.provisioningJobStatus{flex:none;padding:5px 8px;border-radius:20px;background:#edf1f6;color:#596a81;font-size:10px;font-weight:700}.provisioningJobStatus.succeeded{background:#e6f9f1;color:#15865b}.provisioningJobStatus.failed,.provisioningJobStatus.dead_letter{background:#fff0ef;color:#a33333}.provisioningJobStatus.queued,.provisioningJobStatus.running{background:#fff5d8;color:#805f15}.provisioningJobInfo{display:grid;gap:3px;min-width:0;flex:1}.provisioningJobInfo b{overflow:hidden;color:#46566d;font-size:11px;text-overflow:ellipsis}.provisioningJobInfo small,.provisioningJobMeta{overflow-wrap:anywhere;color:#8995a6;font-size:10px}.provisioningJobMeta{display:grid;gap:3px;flex:none;text-align:right}.provisioningJobMeta time{white-space:nowrap}@media(max-width:500px){.provisioningHistory{padding:12px}.provisioningJobRow{align-items:flex-start;gap:7px}.provisioningJobStatus{padding:4px 6px}.provisioningJobMeta{font-size:9px}}
 .mailboxToolbar label{display:grid;gap:6px;flex:1;font-size:12px;font-weight:600}.mailboxToolbar select{width:100%;min-width:0}.mailboxCapacity{display:grid;gap:7px;padding:14px;border:1px solid #bddbd2;background:#eefbf6;border-radius:10px;color:#146648}.mailboxCapacity small{font-size:12px;line-height:1.6}.mailboxAddress{display:flex;flex-wrap:wrap;align-items:center;gap:7px;min-width:0}.mailboxAddress input{min-width:80px;width:100%}.mailboxAddress span{font-size:12px;overflow-wrap:anywhere;color:#667085}.mailboxObserved{display:block;color:#667085;font-size:11px;margin-top:6px}.mailboxPasswordReveal small{display:block;font-size:11px;color:#667085;max-width:400px;line-height:1.5}.mailboxRow{flex-wrap:wrap}.mailboxRow>div{min-width:150px;flex:1}
+
+.mailboxSection, .mailboxDirectory { border:1px solid #dce6f3; border-radius:12px; padding:14px; min-width:0; }
+.mailboxSection > summary, .mailboxManage > summary { cursor:pointer; font-weight:650; color:#24466e; }
+.mailboxSection > form { margin-top:12px; }
+.mailboxDirectoryHead { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+.mailboxDirectoryHead h3 { margin:0; }
+.mailboxDirectoryHead b { overflow-wrap:anywhere; }
+.mailboxFilters { display:grid; grid-template-columns:minmax(0,2fr) repeat(2,minmax(0,1fr)); gap:10px; margin:14px 0; }
+.mailboxFilters label { display:grid; gap:6px; min-width:0; font-size:13px; }
+.mailboxFilters input, .mailboxFilters select { width:100%; min-width:0; padding:9px; border:1px solid #dce6f3; border-radius:8px; background:white; }
+.mailboxCards { display:grid; gap:10px; }
+.mailboxCard { border:1px solid #e1e9f3; border-radius:10px; padding:12px; min-width:0; }
+.mailboxState { background:#edf3fa; color:#304d6d; border-radius:16px; padding:4px 8px; font-size:12px; }
+.mailboxState[data-state="Sẵn sàng"] { background:#e6f7ec; color:#146443; }
+.mailboxState[data-state="Cần xử lý"], .mailboxState[data-state="Cần đối soát"] { background:#fff2d5; color:#814d08; }
+.mailboxUsage { display:flex; flex-wrap:wrap; gap:8px 16px; color:#465f79; font-size:13px; margin:10px 0; }
+.mailboxUsage progress { width:100%; height:9px; accent-color:#2863b5; }
+.mailboxManageActions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:10px; }
+@media(max-width:640px) { .mailboxFilters { grid-template-columns:minmax(0,1fr); } }
