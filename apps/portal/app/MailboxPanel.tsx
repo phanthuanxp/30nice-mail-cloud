@@ -82,6 +82,15 @@ export default function MailboxPanel({fixedTenantId,fixedDomainId}:{fixedTenantI
        <span>Hạn mức thực <b>{limit===null?'Chưa xác nhận':size(limit)+' GiB'}</b></span>
        {used!==null&&limit!==null&&limit>0&&<progress aria-label={`Dung lượng đã dùng của ${box.address}`} value={Math.min(used,limit)} max={limit}/>}
       </div>
+      {state==='Sẵn sàng'&&<details className="mailboxManage mailboxSmtp">
+       <summary>Kết nối SMTP với website</summary>
+       <dl className="mailboxSmtpFields">
+        <div><dt>Máy chủ SMTP</dt><dd><code>mx.30nice.vn</code><DnsCopyButton value="mx.30nice.vn" label="Máy chủ SMTP"/></dd></div>
+        <div><dt>Cổng và mã hóa</dt><dd><b>587 · STARTTLS</b><small>Hoặc 465 nếu website dùng SSL/TLS.</small></dd></div>
+        <div><dt>Tên đăng nhập và địa chỉ gửi</dt><dd><code>{box.address}</code><DnsCopyButton value={box.address} label="Địa chỉ SMTP"/></dd></div>
+        <div><dt>Xác thực SMTP</dt><dd><b>Bật</b><small>Dùng mật khẩu của hộp thư này.</small></dd></div>
+       </dl>
+      </details>}
       <details className="mailboxManage">
        <summary>Quản lý hộp thư</summary>
        <div className="mailboxManageActions">
