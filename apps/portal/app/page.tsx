@@ -18,12 +18,13 @@ import {
 import DomainWizard from "./DomainWizard";
 import AuthGate from "./AuthGate";
 import {CustomerProvider,useCustomer} from './CustomerContext';
-import {CustomerWorkspace,ServicePlans,OperationsPanel,SecurityPanel} from './ProductPanels';
+import {CustomerWorkspace,ServicePlans,SecurityPanel} from './ProductPanels';
 import DnsHealthPanel from "./DnsHealthPanel";
 import MemberPanel from "./MemberPanel";
 import MailboxPanel from "./MailboxPanel";
 import AliasPanel from "./AliasPanel";
 import OnboardingPanel from "./OnboardingPanel";
+import OperationsPanel from "./OperationsPanel";
 import OverviewPanel, {type OverviewTenant} from "./OverviewPanel";
 import CustomersPanel from "./CustomersPanel";
 type Tenant = OverviewTenant & {
@@ -276,7 +277,7 @@ function Dashboard() {
                 <MemberPanel />
               ) : active === "Hộp thư" ? (
                 <MailboxPanel />
-              ) : active === "Gói dịch vụ" ? (<ServicePlans />) : active === "Máy chủ" ? (<OperationsPanel />) : active === "Bảo mật" ? (<SecurityPanel />) : active === "Cài đặt" ? (<CustomerWorkspace />) : (
+              ) : active === "Gói dịch vụ" ? (<ServicePlans />) : active === "Máy chủ" ? (<OperationsPanel apiOnline={healthError?false:health?true:undefined} databaseOnline={databaseOnline} mailOnline={mailBackendOnline} onRefreshHealth={()=>{setHealthLoading(true);setHealthRefresh(value=>value+1);}} onNavigate={(page,tenantId)=>{customer.selectTenant(tenantId);setActive(page);}} />) : active === "Bảo mật" ? (<SecurityPanel />) : active === "Cài đặt" ? (<CustomerWorkspace />) : (
                 <div className="empty">
                   <AlertTriangle size={26} />
                   <h3>Module đang được nối dần vào backend</h3>

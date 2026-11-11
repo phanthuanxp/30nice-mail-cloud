@@ -28,7 +28,12 @@ async function main(){
  remote.get('info@example.test').quotaBytes=1024**3;await reconcile(db,mailcow);assert.equal((await db.query('select provisioning_state from mailboxes where id=$1',[box.id]))[0].provisioning_state,'reconcile');assert.equal((await db.query('select quota_gb from mailboxes where id=$1',[box.id]))[0].quota_gb,3,'Read-only reconciliation must not overwrite desired quota');
  process.env.NODE_ENV='production';const token='integration-session-token';const hash=createHash('sha256').update(token).digest('hex');const session={email:'info@example.test',password:'not-a-real-password',expiresAt:Date.now()+60000};await db.query('insert into webmail_sessions(token_hash,email,secret_ciphertext,expires_at) values($1,$2,$3,$4)',[hash,session.email,sealJobSecret(JSON.stringify(session),'webmail:'+hash),new Date(session.expiresAt)]);
  const first=new WebmailService(db),second=new WebmailService(db);await first.resumeSession(token);await second.resumeSession(token);assert.equal(second.profile(token).email,session.email,'A second API instance resumes the persisted encrypted session');await second.logout(token);await first.resumeSession(token);assert.throws(()=>first.profile(token));
- const tenantOps=new TenantOperations(db,mailcow);const plan=await tenantOps.createPlan({name:'Business',mailboxLimit:20,storageGb:30,mailboxMaxGb:10});await tenantOps.assignPlan(a.id,plan.id,'admin@test');assert.equal((await db.query('select plan_id::text from tenants where id=$1',[a.id]))[0].plan_id,plan.id);assert.equal(info.max_quota_for_domain,30*1024**3);
+ const tenantOps=new TenantOperations(db,mailcow);
+ const operations=await tenantOps.operations();
+ assert.ok(operations.failedJobs.some(job=>job.address==='fail@example.test'&&job.tenantId===a.id&&job.status==='dead_letter'));
+ assert.ok(operations.domains.some(item=>item.tenantId===a.id&&item.domain==='example.test'&&item.mailboxIssues>0));
+ assert.ok(operations.failedJobs.every(job=>!('secret_ciphertext' in job)&&!('payload' in job)));
+ const plan=await tenantOps.createPlan({name:'Business',mailboxLimit:20,storageGb:30,mailboxMaxGb:10});await tenantOps.assignPlan(a.id,plan.id,'admin@test');assert.equal((await db.query('select plan_id::text from tenants where id=$1',[a.id]))[0].plan_id,plan.id);assert.equal(info.max_quota_for_domain,30*1024**3);
  const small=await tenantOps.createPlan({name:'Too small',mailboxLimit:1,storageGb:1,mailboxMaxGb:1});const preview=await tenantOps.previewPlan(a.id,small.id);
  assert.equal(preview.eligible,false);
  assert.equal(preview.issues.length,3,'Report mailbox count, total allocation and per-mailbox allocation');
