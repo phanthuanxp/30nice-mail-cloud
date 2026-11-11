@@ -13,7 +13,10 @@ export default function MemberPanel({ fixedTenantId,onChanged }: { fixedTenantId
   const [members,setMembers]=useState<Member[]>([]);
   const [email,setEmail]=useState('');
   const [password,setPassword]=useState('');
-  const [role,setRole]=useState('tenant_admin');
+  const [actorEmail,setActorEmail]=useState('');
+  const [query,setQuery]=useState('');
+  const [roleFilter,setRoleFilter]=useState('');
+  const [statusFilter,setStatusFilter]=useState('');
   const [message,setMessage]=useState('');
   const [error,setError]=useState(false);
   const [loading,setLoading]=useState(false);
@@ -23,7 +26,28 @@ export default function MemberPanel({ fixedTenantId,onChanged }: { fixedTenantId
   const memberRequest=useRef(0);
   const currentTenant=useRef(tenant);
   currentTenant.current=tenant;
-  useEffect(()=>{fetch('/api/api/v1/tenants').then(r=>r.ok?r.json():Promise.reject()).then(items=>{setTenants(items);setTenant(fixedTenantId?(items.find((item:Tenant)=>item.id===fixedTenantId)?.id||''):(items.find((item:Tenant)=>item.id===customer.tenantId)?.id||items[0]?.id||''));}).catch(()=>{setError(true);setMessage('Không tải được danh sách khách hàng. Hãy đăng nhập lại rồi thử lại.');});},[fixedTenantId,customer.tenantId]);
+  useEffect(()=>{
+    let active=true;
+    fetch('/api/api/v1/auth/me').then(response=>response.ok?response.json():null).then(account=>{
+      if(active&&typeof account?.email==='string')setActorEmail(account.email.toLowerCase());
+    }).catch(()=>{});
+    return()=>{active=false;};
+  },[]);
+  useEffect(()=>{
+    let active=true;
+    fetch('/api/api/v1/tenants').then(async response=>{
+      if(!response.ok)throw Error('Không tải được danh sách khách hàng.');
+      const items=await response.json();
+      if(!Array.isArray(items))throw Error('Danh sách khách hàng không hợp lệ.');
+      if(!active)return;
+      setTenants(items);
+      const selected=items.find((item:Tenant)=>item.id===(fixedTenantId??customer.tenantId));
+      setTenant(selected?.id||(fixedTenantId?'':items[0]?.id||''));
+    }).catch(reason=>{
+      if(active){setError(true);setMessage(reason.message);}
+    });
+    return()=>{active=false;};
+  },[fixedTenantId,customer.tenantId]);
   const load=async()=>{
     const target=tenant;
     if(!target||currentTenant.current!==target)return;
@@ -39,16 +63,81 @@ export default function MemberPanel({ fixedTenantId,onChanged }: { fixedTenantId
       if(sequence===memberRequest.current&&currentTenant.current===target){setMemberLoadError(true);setError(true);setMessage(e instanceof Error?e.message:'Không tải được danh sách thành viên');}
     }finally{if(sequence===memberRequest.current&&currentTenant.current===target)setMembersLoading(false);}
   };
-  useEffect(()=>{setMembersLoading(false);setMemberLoadError(false);setMembers([]);setMessage('');void load();return()=>{memberRequest.current++;};},[tenant]);
+  useEffect(()=>{setMembersLoading(false);setMemberLoadError(false);setMembers([]);setMessage('');setEmail('');setPassword('');setQuery('');setRoleFilter('');setStatusFilter('');void load();return()=>{memberRequest.current++;};},[tenant]);
 
-  const create=async()=>{setLoading(true);setError(false);setMessage('');try{const response=await fetch(`/api/api/v1/tenants/${tenant}/members`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,role})});const result=await response.json();if(!response.ok)throw new Error(result.message||'Không thể tạo thành viên');setMessage('Đã tạo tài khoản thành viên thành công.');setEmail('');setPassword('');await load();onChanged?.();}catch(e){setError(true);setMessage(e instanceof Error?e.message:'Không thể tạo thành viên');}finally{setLoading(false);}};
-  const changeStatus=async(member:Member)=>{const status=member.status==='active'?'disabled':'active';setChanging(member.id);setError(false);setMessage('');try{const response=await fetch(`/api/api/v1/tenants/${tenant}/members/${member.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});const result=await response.json();if(!response.ok)throw new Error(result.message||'Không thể cập nhật trạng thái');setMessage(status==='disabled'?'Đã khóa tài khoản. Các phiên đăng nhập hiện có cũng bị chặn ngay.':'Đã mở khóa tài khoản.');await load();}catch(e){setError(true);setMessage(e instanceof Error?e.message:'Không thể cập nhật trạng thái');}finally{setChanging('');}};
+  const create=async()=>{setLoading(true);setError(false);setMessage('');try{const response=await fetch(`/api/api/v1/tenants/${tenant}/members`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,role:"tenant_admin"})});const result=await response.json();if(!response.ok)throw new Error(result.message||'Không thể tạo thành viên');setMessage('Đã tạo tài khoản thành viên thành công.');setEmail('');setPassword('');await load();onChanged?.();}catch(e){setError(true);setMessage(e instanceof Error?e.message:'Không thể tạo thành viên');}finally{setLoading(false);}};
+  const changeStatus=async(member:Member)=>{const status=member.status==='active'?'disabled':'active';
+    if(status==='disabled'&&(lockReason(member)||!window.confirm(`Khóa tài khoản ${member.email}? Quyền truy cập quản trị sẽ bị chặn ngay.`)))return;
+    setChanging(member.id);setError(false);setMessage('');try{const response=await fetch(`/api/api/v1/tenants/${tenant}/members/${member.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});const result=await response.json();if(!response.ok)throw new Error(result.message||'Không thể cập nhật trạng thái');setMessage(status==='disabled'?'Đã khóa tài khoản. Các phiên đăng nhập hiện có cũng bị chặn ngay.':'Đã mở khóa tài khoản.');await load();}catch(e){setError(true);setMessage(e instanceof Error?e.message:'Không thể cập nhật trạng thái');}finally{setChanging('');}};
+  const activeAdmins=members.filter(member=>member.role==='tenant_admin'&&member.status==='active').length;
+  function lockReason(member:Member) {
+    if(member.status!=='active')return '';
+    if(actorEmail===member.email.toLowerCase())return 'Bạn đang đăng nhập bằng tài khoản này.';
+    if(member.role==='tenant_admin'&&activeAdmins<=1)return 'Doanh nghiệp cần ít nhất một quản trị viên đang hoạt động.';
+    return '';
+  }
+
+  const shown=members.filter(member=>
+    member.email.toLowerCase().includes(query.trim().toLowerCase()) &&
+    (!roleFilter||member.role===roleFilter) &&
+    (!statusFilter||member.status===statusFilter)
+  );
+
   return <div className="memberPanel">
-    <div className="memberToolbar"><label>Khách hàng<select value={tenant} disabled={loading||Boolean(changing)||Boolean(fixedTenantId)} onChange={e=>{memberRequest.current++;setMembers([]);setMessage('');customer.selectTenant(e.target.value);setTenant(e.target.value);}}><option value="">Chọn khách hàng</option>{tenants.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="ghost" onClick={load} disabled={!tenant||loading||Boolean(changing)}><RefreshCw size={14}/> Làm mới</button></div>
+    <div className="memberToolbar">
+      <label>Khách hàng<select aria-label="Khách hàng của thành viên" value={tenant} disabled={loading||Boolean(changing)||Boolean(fixedTenantId)} onChange={event=>{
+        memberRequest.current++;
+        setMembers([]);
+        setMessage('');
+        customer.selectTenant(event.target.value);
+        setTenant(event.target.value);
+      }}><option value="">Chọn khách hàng</option>{tenants.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <button className="ghost" onClick={async()=>{setMessage('');await load();}} disabled={!tenant||loading||membersLoading||Boolean(changing)}><RefreshCw size={14}/> Làm mới thành viên</button>
+    </div>
+
     <MemberInvites key={tenant} tenantId={tenant} onAccepted={()=>{void load();onChanged?.();}}/>
-    <details><summary>Tạo trực tiếp bằng mật khẩu ban đầu</summary><div className="memberCreate"><label>Email đăng nhập<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="admin@congty.vn"/></label><label>Mật khẩu ban đầu<input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Tối thiểu 12 ký tự"/></label><label>Vai trò<select value={role} onChange={e=>setRole(e.target.value)}><option value="tenant_admin">Quản trị doanh nghiệp</option></select></label><button className="primary" disabled={loading||!tenant||!email||password.length<12} onClick={create}>{loading?<RefreshCw className="spin" size={16}/>:<UserPlus size={16}/>} Tạo tài khoản</button></div></details>
-    <p className="memberHint">Tạo quản trị viên doanh nghiệp tại đây. Người dùng email được tạo ở mục Hộp thư; tài khoản này không tự tạo hộp thư. Khóa tài khoản sẽ kết thúc quyền truy cập ngay; hộp thư và dữ liệu email không bị xóa.</p>
-    {message&&<p className={`memberMessage ${error?'memberError':''}`}>{message}</p>}
-    <div className="memberList">{members.map(item=><div className="memberRow" key={item.id}><b>{item.email}</b><span>{item.role==='tenant_admin'?'Quản trị doanh nghiệp':'Người dùng hộp thư'}</span><em className={item.status==='active'?'':'memberDisabled'}>{item.status==='active'?'Đang hoạt động':'Đã khóa'}</em><button className={item.status==='active'?'memberAction memberActionDisable':'memberAction'} disabled={Boolean(changing)||loading||membersLoading} onClick={()=>changeStatus(item)}>{changing===item.id?<RefreshCw className="spin" size={14}/>:item.status==='active'?<ShieldOff size={14}/>:<ShieldCheck size={14}/>} {item.status==='active'?'Khóa':'Mở khóa'}</button></div>)}{membersLoading?<p className="emptyText" role="status">Đang tải thành viên…</p>:memberLoadError?<p className="emptyText">Không tải được dữ liệu. Chọn Làm mới để thử lại.</p>:!tenant?<p className="emptyText">Chọn khách hàng để xem thành viên.</p>:!members.length?<p className="emptyText">Chưa có thành viên trong khách hàng này.</p>:null}</div>
+    <details className="memberSection">
+      <summary>Tạo trực tiếp bằng mật khẩu ban đầu</summary>
+      <form className="memberCreate" onSubmit={event=>{event.preventDefault();if(!loading&&tenant&&!changing)void create();}}>
+        <label>Email đăng nhập<input type="email" required value={email} onChange={event=>setEmail(event.target.value)} placeholder="admin@congty.vn"/></label>
+        <label>Mật khẩu ban đầu<input type="password" required minLength={12} maxLength={256} autoComplete="new-password" value={password} onChange={event=>setPassword(event.target.value)} placeholder="Tối thiểu 12 ký tự"/></label>
+        <button type="submit" className="primary" disabled={loading||Boolean(changing)||!tenant||!email||password.length<12}><UserPlus size={16}/> Tạo quản trị viên</button>
+      </form>
+    </details>
+    {message&&<p role={error?'alert':'status'} className={`memberMessage ${error?'memberError':''}`}>{message}</p>}
+
+    <section className="memberSection" aria-label="Danh sách thành viên" aria-busy={membersLoading}>
+      <div className="memberListHeading"><h3>Danh sách thành viên</h3>{!membersLoading&&!memberLoadError&&<span>{shown.length}/{members.length} thành viên</span>}</div>
+      <div className="memberFilters">
+        <label>Email<input type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder="Tìm email thành viên"/></label>
+        <label>Vai trò<select aria-label="Lọc thành viên theo vai trò" value={roleFilter} onChange={event=>setRoleFilter(event.target.value)}>
+          <option value="">Tất cả vai trò</option><option value="tenant_admin">Quản trị doanh nghiệp</option><option value="mailbox_user">Người dùng hộp thư</option>
+        </select></label>
+        <label>Trạng thái<select aria-label="Lọc thành viên theo trạng thái" value={statusFilter} onChange={event=>setStatusFilter(event.target.value)}>
+          <option value="">Tất cả trạng thái</option><option value="active">Đang hoạt động</option><option value="disabled">Đã khóa</option>
+        </select></label>
+      </div>
+      {membersLoading?<p className="emptyText" role="status">Đang tải thành viên…</p>:memberLoadError?<p className="emptyText">Chọn Làm mới thành viên để thử lại.</p>:!shown.length?
+        <p className="emptyText">{!tenant?'Chọn khách hàng để xem thành viên.':members.length?'Không tìm thấy thành viên phù hợp.':'Chưa có thành viên.'}</p>:
+        <div className="memberList">{shown.map(member=>{
+          const admin=member.role==='tenant_admin';
+          const active=member.status==='active';
+          const reason=lockReason(member);
+          return <article className="memberRow" key={member.id}>
+            <div className="memberIdentity">
+              <b>{member.email}</b>
+              <span>{admin?'Quản trị doanh nghiệp':'Người dùng hộp thư'}</span>
+              <small>{admin?'Quản lý dịch vụ email và thành viên của doanh nghiệp.':'Truy cập webmail theo quyền tài khoản.'}</small>
+            </div>
+            <em className={active?'':'memberDisabled'}>{active?'Đang hoạt động':'Đã khóa'}</em>
+            <div className="memberActionGroup">
+              <button className={active?'memberAction memberActionDisable':'memberAction'} disabled={Boolean(changing)||loading||Boolean(reason)} onClick={()=>void changeStatus(member)}>
+                {changing===member.id?<RefreshCw className="spin" size={14}/>:active?<ShieldOff size={14}/>:<ShieldCheck size={14}/>} {active?'Khóa':'Mở khóa'}
+              </button>
+              {reason&&<small>{reason}</small>}
+            </div>
+          </article>;
+        })}</div>}
+    </section>
   </div>;
 }
