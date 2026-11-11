@@ -1,3 +1,27 @@
 .memberPanel{display:grid;gap:18px}.memberToolbar,.memberCreate{display:flex;gap:10px;align-items:end}.memberToolbar select,.memberCreate input,.memberCreate select{border:1px solid #dfe6f0;border-radius:8px;background:#fff;padding:11px}.memberToolbar select{flex:1}.memberCreate{background:#f7f9fc;padding:18px;border-radius:10px}.memberCreate label{flex:1;font-size:12px;font-weight:700}.memberCreate input,.memberCreate select{display:block;width:100%;margin-top:7px}.memberMessage{background:#eaf8f1;color:#16865c;padding:10px;border-radius:7px;font-size:12px}.memberList{border-top:1px solid #edf0f4}.memberRow{display:flex;gap:14px;align-items:center;border-bottom:1px solid #edf0f4;padding:14px 0}.memberRow b{flex:1;color:#243653}.memberRow span{color:#8995a6;font-size:12px}.memberRow em{font-style:normal;color:#15865b;background:#e6f9f1;border-radius:20px;padding:5px 9px;font-size:11px}@media(max-width:800px){.memberCreate{display:grid}.memberRow{flex-wrap:wrap}.memberRow b{min-width:100%}}
 
 .memberToolbar label{flex:1;font-size:12px;font-weight:700}.memberToolbar label select{display:block;width:100%;margin-top:7px}.memberHint{margin:0;color:#66758d;font-size:12px}.memberMessage.memberError{background:#fff0ef;color:#b42318}.memberRow .memberDisabled{color:#a12b2b;background:#ffeded}.memberAction{display:inline-flex;align-items:center;gap:6px;border:1px solid #cbd6e5;border-radius:8px;padding:8px 11px;background:#fff;color:#2458a6;cursor:pointer;font-weight:650}.memberActionDisable{color:#aa3434}.memberAction:disabled{opacity:.55;cursor:wait}
+
+.memberSection { border:1px solid #e1e9f3; border-radius:12px; padding:14px; min-width:0; }
+.memberSection > summary { cursor:pointer; font-weight:650; color:#24466e; }
+.memberSection .memberCreate { margin-top:10px; }
+.memberToolbar label,.memberCreate label { min-width:0; }
+.memberListHeading { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+.memberListHeading h3 { margin:0; }
+.memberFilters { display:grid; grid-template-columns:minmax(0,2fr) repeat(2,minmax(0,1fr)); gap:10px; margin:14px 0; }
+.memberFilters label { display:grid; gap:6px; min-width:0; font-size:13px; }
+.memberFilters input,.memberFilters select { width:100%; min-width:0; padding:9px; border:1px solid #dce6f3; border-radius:8px; background:#fff; }
+.memberIdentity { flex:1; min-width:0; display:grid; gap:4px; overflow-wrap:anywhere; }
+.memberIdentity small,.memberActionGroup small { color:#52667f; font-size:12px; }
+.memberActionGroup { display:grid; gap:5px; justify-items:start; max-width:220px; }
+.memberAction:disabled { cursor:default; }
+@media(max-width:640px) {
+ .memberFilters { grid-template-columns:minmax(0,1fr); }
+ .memberIdentity { flex-basis:100%; }
+}
+.memberListHeading h4 { margin:0; }
+.memberListHeading select { max-width:100%; padding:7px; border:1px solid #dce6f3; border-radius:7px; background:#fff; }
+.memberSection .productRow { flex-wrap:wrap; overflow-wrap:anywhere; }
+.memberInviteStatus { color:#304d6d; background:#edf3fa; border-radius:12px; padding:4px 8px; }
+.memberInviteStatus[data-status="accepted"] { color:#146443; background:#e6f7ec; }
+.memberInviteStatus[data-status="pending"] { color:#814d08; background:#fff2d5; }
