@@ -30,8 +30,14 @@ class ApiController {
   @Post('api/v1/tenants/:tenantId/invitations/:id/revoke') async revokeInvitation(@Param('tenantId') tenantId:string,@Param('id') id:string,@Headers('authorization') header?:string){const session=await this.requireWriteAccess(header);this.assertSessionTenant(session,tenantId);return new MemberInvitations(this.service.databaseAccess()).revoke(await this.service.assertTenant(tenantId,session.tenantId),id,session.sub);}
   @Get('api/v1/auth/me') async me(@Headers('authorization') header?:string){const s=await this.auth.verifyActive(header);return {email:s.sub,role:s.role,tenantId:s.tenantId};}
   @Post('api/v1/auth/logout-all') async logoutAll(@Headers('authorization') header:string|undefined,@Res({passthrough:true}) res:any){const result=await this.auth.logoutAll(header);res.clearCookie('30nice_admin',{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'strict',path:'/api/api/v1'});return result;}
-  @Get('api/v1/plans') async plans(@Headers('authorization') header?:string){await this.requireReadAccess(header);return new TenantOperations(this.service.databaseAccess(),this.mailcow).plans();}
+  @Get('api/v1/plans') async plans(@Headers('authorization') header?:string){const session=await this.requireReadAccess(header);return new TenantOperations(this.service.databaseAccess(),this.mailcow).plans(session.role==='super_admin');}
   @Post('api/v1/plans') async createPlan(@Body() body:Record<string,unknown>,@Headers('authorization') header?:string){await this.requireWriteAccess(header);this.auth.requireSuperAdmin(header);return new TenantOperations(this.service.databaseAccess(),this.mailcow).createPlan(body);}
+  @Get('api/v1/tenants/:tenantId/plan-preview') async previewPlan(@Param('tenantId') tenantId:string,@Query('planId') planId:string,@Headers('authorization') header?:string){
+    await this.requireReadAccess(header);
+    this.auth.requireSuperAdmin(header);
+    await this.service.assertTenant(tenantId);
+    return new TenantOperations(this.service.databaseAccess(),this.mailcow).previewPlan(tenantId,planId);
+  }
   @Put('api/v1/tenants/:tenantId/plan') async assignPlan(@Param('tenantId') tenantId:string,@Body() body:{planId?:unknown},@Headers('authorization') header?:string){const session=await this.requireWriteAccess(header);this.auth.requireSuperAdmin(header);await this.service.assertTenant(tenantId);return new TenantOperations(this.service.databaseAccess(),this.mailcow).assignPlan(tenantId,body.planId,session.sub);}
   @Put('api/v1/tenants/:tenantId/contact') async contact(@Param('tenantId') tenantId:string,@Body() body:Record<string,unknown>,@Headers('authorization') header?:string){const session=await this.requireWriteAccess(header);this.assertSessionTenant(session,tenantId);return new TenantOperations(this.service.databaseAccess(),this.mailcow).contact(await this.service.assertTenant(tenantId,session.tenantId),body,session.sub);}
   @Get('api/v1/operations') async operations(@Headers('authorization') header?:string){await this.requireReadAccess(header);this.auth.requireSuperAdmin(header);return new TenantOperations(this.service.databaseAccess(),this.mailcow).operations();}
