@@ -1,0 +1,25 @@
+.opsConsole { display:grid; gap:16px; min-width:0; color:#213955; }
+.opsHeading,.opsIssue,.opsJobs { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }
+.opsHeading,.opsIssue { justify-content:space-between; }
+.opsHeading h3,.opsSection h3 { margin:0 0 6px; }
+.opsHeading p,.opsSection p,.opsIssue small,.opsCard small { color:#526780; font-size:13px; }
+.opsHeading p { margin:0; }
+.opsHeading button,.opsIssue button { display:inline-flex; align-items:center; gap:6px; }
+.opsCards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,165px),1fr)); gap:10px; }
+.opsCard,.opsSection { border:1px solid #dce6f3; border-radius:12px; padding:14px; min-width:0; }
+.opsCard { display:grid; justify-items:start; gap:8px; }
+.opsCard svg { color:#2863b5; }
+.opsBadge { background:#edf3fa; border-radius:14px; color:#365271; font-size:12px; padding:4px 8px; }
+.opsBadge[data-state="good"] { background:#e6f7ec; color:#146443; }
+.opsBadge[data-state="warn"] { background:#fff2d5; color:#814d08; }
+.opsJobs { margin-bottom:9px; }
+.opsIssue { padding:12px 0; border-top:1px solid #e6edf5; }
+.opsIssue > div { flex:1; min-width:min(100%,220px); overflow-wrap:anywhere; }
+.opsIssue small { display:block; margin-top:4px; }
+.opsFilters { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.opsFilters label { display:grid; gap:5px; min-width:0; font-size:13px; }
+.opsFilters input,.opsFilters select { width:100%; min-width:0; padding:8px; border:1px solid #dce6f3; border-radius:8px; background:white; }
+.opsAudit { min-width:540px; }
+.opsAudit td { overflow-wrap:anywhere; }
+@media(max-width:750px) { .opsFilters { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:410px) { .opsFilters { grid-template-columns:minmax(0,1fr); } }

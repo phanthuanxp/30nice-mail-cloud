@@ -74,8 +74,30 @@ export class TenantOperations{
   await this.db.query("insert into audit_logs(tenant_id,actor_email,action,resource_type,resource_id) values($1::uuid,$2,'tenant.contact_update','tenant',$1)",[tenant,actor]);return rows?.[0];
  }
  async operations(){
-  const [jobs,workers,drift]=await Promise.all([this.db.query("select status,count(*)::int as count,min(updated_at) as \"oldestUpdate\" from provisioning_jobs group by status"),this.db.query("select name,last_seen as \"lastSeen\",last_seen>now()-interval '60 seconds' as healthy from worker_heartbeats"),this.db.query("select t.name,d.domain,d.provisioning_status as \"provisioningStatus\",d.provisioning_error as \"provisioningError\",(select count(*)::int from mailboxes m where m.domain_id=d.id and m.provisioning_state in ('reconcile','failed')) as \"mailboxIssues\" from domains d join tenants t on t.id=d.tenant_id order by t.name")]);
-  let monitor=null;try{monitor=JSON.parse(await readFile('/var/lib/30nice-mailcloud-monitor/status.json','utf8'));}catch{}
-  return {jobs:jobs??[],workers:workers??[],domains:drift??[],monitor,checkedAt:new Date().toISOString()};
+  const [jobs,workers,domains,failedJobs,backupStamp,monitorText]=await Promise.all([
+   this.db.query("select status,count(*)::int as count,min(updated_at) as \"oldestUpdate\" from provisioning_jobs group by status"),
+   this.db.query("select name,last_seen as \"lastSeen\",last_seen>now()-interval '60 seconds' as healthy from worker_heartbeats"),
+   this.db.query(`
+    select t.id::text as "tenantId",t.name,d.domain,d.status as "ownershipStatus",d.provisioning_status as "provisioningStatus",
+      (select count(*)::int from mailboxes m where m.domain_id=d.id and m.provisioning_state in ('reconcile','failed')) as "mailboxIssues"
+    from domains d join tenants t on t.id=d.tenant_id
+    order by t.name,d.domain
+   `),
+   this.db.query(`
+    select j.id::text,t.id::text as "tenantId",t.name,j.status,j.attempts,
+      j.updated_at as "updatedAt",substring(j.idempotency_key from 9) as address
+    from provisioning_jobs j join tenants t on t.id=j.tenant_id
+    where j.job_type='mailbox.provision' and j.status in ('failed','dead_letter')
+    order by j.updated_at desc,j.id limit 30
+   `),
+   readFile('/opt/30nice-mail-cloud-backups/scheduled/last-success','utf8').catch(()=>null),
+   readFile('/var/lib/30nice-mailcloud-monitor/status.json','utf8').catch(()=>null),
+  ]);
+  const stamp=backupStamp?.trim().match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  const backupDate=stamp?new Date(`${stamp[1]}-${stamp[2]}-${stamp[3]}T${stamp[4]}:${stamp[5]}:${stamp[6]}Z`):null;
+  const backupAt=backupDate&&Number.isFinite(backupDate.getTime())?backupDate.toISOString():null;
+  let monitor=null;
+  try{if(monitorText)monitor=JSON.parse(monitorText);}catch{}
+  return {jobs:jobs??[],workers:workers??[],domains:domains??[],failedJobs:failedJobs??[],backupAt,monitor,checkedAt:new Date().toISOString()};
  }
 }
