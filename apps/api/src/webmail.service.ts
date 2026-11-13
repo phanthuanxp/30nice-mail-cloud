@@ -503,7 +503,7 @@ export class WebmailService {
         if (!file) throw new BadRequestException('Không tìm thấy tệp đính kèm');
         if (inline && !/^image\/(?:png|jpeg|gif|webp|avif)$/i.test(file.contentType || '')) throw new BadRequestException('Chỉ cho phép hiển thị ảnh an toàn trong nội dung thư');
         const filename = (file.filename || 'tep-dinh-kem').replace(/[\r\n"\\/]/g, '_').slice(0, 180);
-        return { content: file.content, filename, contentType: file.contentType || 'application/octet-stream' };
+        return { content: file.content, filename, contentType: inline ? file.contentType : 'application/octet-stream' };
       } finally { lock.release(); }
     });
   }
