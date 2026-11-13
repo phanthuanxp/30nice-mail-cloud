@@ -281,3 +281,15 @@
   order: 1;
   flex: none;
 }
+
+.wm-app .wm-theme-toggle {
+  flex: none;
+  border: 1px solid var(--wm-border);
+  background: var(--wm-subtle);
+  color: var(--wm-accent);
+}
+
+.wm-app .wm-theme-toggle:hover {
+  background: var(--wm-hover);
+  color: var(--wm-accent);
+}

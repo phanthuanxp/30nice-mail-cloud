@@ -4,7 +4,7 @@ import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallbac
 import { updateMessageFlagState } from './webmail-state';
 import { plainTextToHtml } from './webmail-compose';
 import { RequestSequence } from './request-sequence.cjs';
-import { Archive, ArrowLeft, Bold, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File as FileIcon, Forward, Image as ImageIcon, Inbox, Italic, Link2, List, ListOrdered, LogOut, Mail, MailOpen, Menu, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Trash2, Underline, X } from 'lucide-react';
+import { Archive, ArrowLeft, Bold, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File as FileIcon, Forward, Image as ImageIcon, Inbox, Italic, Link2, List, ListOrdered, LogOut, Mail, MailOpen, Menu, Moon, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Sun, Trash2, Underline, X } from 'lucide-react';
 
 type Folder = { path: string; name: string; specialUse: string | null; messages: number; unread: number };
 type Address = { address: string; name: string };
@@ -188,6 +188,17 @@ export default function WebmailClient() {
   const [mobileNav, setMobileNav] = useState(false);
   const [activePanel, setActivePanel] = useState<'settings' | 'help' | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
+  const [systemDark, setSystemDark] = useState(false);
+  const darkMode = theme === 'dark' || (theme === 'system' && systemDark);
+  const themeToggleLabel = darkMode ? 'Chuyển sang chế độ sáng' : 'Chuyển sang chế độ tối';
+
+  useEffect(() => {
+    const preference = window.matchMedia('(prefers-color-scheme: dark)');
+    const syncPreference = () => setSystemDark(preference.matches);
+    syncPreference();
+    preference.addEventListener('change', syncPreference);
+    return () => preference.removeEventListener('change', syncPreference);
+  }, []);
   const [previewVisible, setPreviewVisible] = useState(true);
   const [largeText, setLargeText] = useState(false);
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
@@ -676,7 +687,12 @@ export default function WebmailClient() {
       <button className="wm-icon-btn wm-mobile-menu" aria-label="Mở điều hướng" onClick={() => setMobileNav(!mobileNav)}><Menu size={21} /></button>
       <div className="wm-logo"><div className="wm-brand-mark"><Mail size={22} /></div><span>30NICE <b>Mail</b></span></div>
       <form className="wm-search" onSubmit={event => { event.preventDefault(); setShowSearchOperators(false); const unchanged=searchInput===query&&page===1; setPage(1); setQuery(searchInput); if(unchanged) void loadMessages(folder, searchInput, 1); }} onKeyDown={event => { if (event.key === 'Escape') setShowSearchOperators(false); }}><Search size={20} /><input ref={searchInputRef} aria-label="Tìm kiếm thư" placeholder="Tìm thư (from:, subject:, after:…)" title="Tìm tự do hoặc dùng from:, to:, cc:, subject:, after:YYYY/MM/DD, before:YYYY/MM/DD, is:unread, is:read, is:starred" value={searchInput} onChange={event => setSearchInput(event.target.value)} /><button type="button" className="wm-search-operators" aria-label="Mở bộ lọc tìm kiếm" title="Bộ lọc tìm kiếm" aria-expanded={showSearchOperators} onClick={() => setShowSearchOperators(open => !open)}><CircleHelp size={18} /></button><button type="submit" aria-label="Tìm kiếm"><Search size={17} /></button>{showSearchOperators && <div className="wm-search-operator-panel" role="dialog" aria-label="Bộ lọc tìm kiếm"><b>Tìm thư theo điều kiện</b><p>Chọn điều kiện để thêm vào ô tìm kiếm, sau đó nhập giá trị.</p><div>{[['Người gửi','from:'],['Người nhận','to:'],['CC','cc:'],['Chủ đề','subject:'],['Sau ngày','after:'],['Trước ngày','before:'],['Chưa đọc','is:unread'],['Đã đọc','is:read'],['Có gắn sao','is:starred']].map(([label,operator]) => <button type="button" key={operator} onClick={() => insertSearchOperator(operator)}><span>{label}</span><code>{operator}</code></button>)}</div><small>Ví dụ: <code>from:an@congty.vn is:unread</code></small></div>}</form>
-      <div className="wm-top-actions"><button className="wm-icon-btn" aria-label="Cài đặt" title="Cài đặt" onClick={() => setActivePanel('settings')}><Settings size={19} /></button><button className="wm-icon-btn wm-help" aria-label="Trợ giúp" title="Trợ giúp" onClick={() => setActivePanel('help')}><CircleHelp size={19} /></button><div className="wm-user-chip"><span className="wm-avatar wm-avatar-small">{initials(account)}</span><span className="wm-user-email">{account}</span><ChevronDown size={15} /></div><button className="wm-icon-btn wm-logout" aria-label="Đăng xuất" title="Đăng xuất" onClick={() => void signOut()}><LogOut size={18} /></button></div>
+      <div className="wm-top-actions">
+        <button type="button" className="wm-icon-btn wm-theme-toggle" aria-label={themeToggleLabel} title={themeToggleLabel}
+          onClick={() => setTheme(darkMode ? 'light' : 'dark')}>
+          {darkMode ? <Sun size={19} aria-hidden="true" /> : <Moon size={19} aria-hidden="true" />}
+        </button>
+        <button className="wm-icon-btn wm-help" aria-label="Trợ giúp" title="Trợ giúp" onClick={() => setActivePanel('help')}><CircleHelp size={19} /></button><div className="wm-user-chip"><span className="wm-avatar wm-avatar-small">{initials(account)}</span><span className="wm-user-email">{account}</span><ChevronDown size={15} /></div><button className="wm-icon-btn wm-logout" aria-label="Đăng xuất" title="Đăng xuất" onClick={() => void signOut()}><LogOut size={18} /></button></div>
     </header>
     <div className="wm-layout" inert={Boolean(deleteConfirmation)}>
       <aside className={`wm-sidebar ${mobileNav ? 'wm-sidebar-open' : ''}`}>
@@ -684,7 +700,7 @@ export default function WebmailClient() {
         <nav className="wm-folder-nav" aria-label="Thư mục">
           {folders.map(item => { const Icon = FOLDER_ICONS[item.specialUse || ''] || (item.path.toUpperCase() === 'INBOX' ? Inbox : Mail); return <button key={item.path} className={`wm-folder-link ${folder === item.path && !selected && !query ? 'active' : ''}`} onClick={() => { setPage(1); setFolder(item.path); setQuery(''); setSearchInput(''); closeReader(); setMobileNav(false); }}><Icon size={18} /><span>{folderLabel(item)}</span>{item.unread > 0 && <b>{item.unread}</b>}</button>; })}
         </nav>
-        <div className="wm-sidebar-bottom"><div className="wm-storage"><div className="wm-storage-title"><span>Dung lượng hộp thư</span><span><ShieldCheck size={15} /></span></div><small>Dung lượng do quản trị viên thiết lập</small></div><button className="wm-folder-link" onClick={() => setActivePanel('settings')}><Settings size={18} /><span>Cài đặt</span></button><button className="wm-folder-link" onClick={() => setActivePanel('help')}><CircleHelp size={18} /><span>Trợ giúp & phản hồi</span></button></div>
+        <div className="wm-sidebar-bottom"><div className="wm-storage"><div className="wm-storage-title"><span>Dung lượng hộp thư</span><span><ShieldCheck size={15} /></span></div><small>Dung lượng do quản trị viên thiết lập</small></div><button className="wm-folder-link" onClick={() => { setMobileNav(false); setActivePanel('settings'); }}><Settings size={18} /><span>Cài đặt</span></button><button className="wm-folder-link" onClick={() => setActivePanel('help')}><CircleHelp size={18} /><span>Trợ giúp & phản hồi</span></button></div>
       </aside>
       <main className="wm-main">
         {error && <div className="wm-inline-alert"><span>{error}</span><button aria-label="Đóng" onClick={() => setError('')}><X size={16} /></button></div>}{notice && <div className="wm-inline-notice" role="status"><span>{notice}</span><button aria-label="Đóng thông báo" onClick={() => setNotice('')}><X size={16} /></button></div>}
