@@ -399,3 +399,46 @@
     border-radius: 0;
   }
 }
+
+.wm-compose-minimized {
+  inset: auto 24px 0 auto;
+  width: min(340px, calc(100vw - 32px));
+  padding: 0;
+  background: transparent;
+}
+
+.wm-compose-minimized .wm-compose-window {
+  width: 100%;
+  height: auto;
+  border-radius: 12px 12px 0 0;
+}
+
+.wm-compose-minimized .wm-compose-title ~ * {
+  display: none;
+}
+
+.wm-compose-minimized .wm-compose-restore {
+  display: block;
+  width: auto;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--wm-text);
+  font: inherit;
+  font-weight: 650;
+}
+
+@media (max-width: 720px) {
+  .wm-app .wm-compose-minimized {
+    inset: auto 16px 86px auto;
+    padding: 0;
+  }
+
+  .wm-app .wm-compose-minimized .wm-compose-window {
+    height: auto;
+    border-radius: 12px;
+  }
+}
