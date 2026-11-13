@@ -1,5 +1,21 @@
 const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const {Pool}=require('pg');const {randomBytes,createHash,createHmac,scryptSync}=require('node:crypto');
 const {DatabaseService}=require('../apps/api/dist/database.service.js');const {MailboxOperations}=require('../apps/api/dist/mailbox-operations.js');const {reconcile}=require('../apps/api/dist/provisioning-worker.js');const {sealJobSecret,openJobSecret}=require('../apps/api/dist/job-secrets.js');const {WebmailService}=require('../apps/api/dist/webmail.service.js');const {TenantOperations}=require('../apps/api/dist/tenant-operations.js');const {AuthService}=require('../apps/api/dist/auth.service.js');const {NestFactory}=require('@nestjs/core');const {AppModule}=require('../apps/api/dist/app.module.js');const {adminSessionMiddleware}=require('../apps/api/dist/http-security.js');const {MemberInvitations}=require('../apps/api/dist/member-invitations.js');
+const {smtpDeliveries}=require('../apps/api/dist/smtp-deliveries.js');
+const deliveryFixture=[
+ ['postfix/submission/smtpd','AAAAA: client=example.test[192.0.2.1], sasl_method=PLAIN, sasl_username=info@example.test'],
+ ['postfix/smtp','AAAAA: to=<recipient@example.test>, relay=mx.example.test, dsn=4.2.0, status=deferred (Try later)'],
+ ['postfix/smtp','AAAAA: to=<recipient@example.test>, relay=mx.example.test, dsn=2.0.0, status=sent (250 Accepted)'],
+ ['postfix/smtp','AAAAA: to=<second@example.test>, relay=mx.example.test, dsn=5.1.1, status=bounced (550 Unknown user)'],
+ ['postfix/qmgr','AAAAA: removed'],
+ ['postfix/smtpd','AAAAA: client=other.example.test[192.0.2.2], sasl_method=PLAIN, sasl_username=other@example.test'],
+ ['postfix/smtp','AAAAA: to=<private@example.test>, relay=mx.example.test, dsn=2.0.0, status=sent (250 Accepted)'],
+ ['postfix/smtp','BBBBB: to=<unmatched@example.test>, relay=mx.example.test, dsn=2.0.0, status=sent (250 Accepted)'],
+].map(([program,message],index)=>({program,message,time:1760000000+index})).reverse();
+const deliveryRows=smtpDeliveries(deliveryFixture,new Set(['info@example.test']));
+assert.deepEqual(deliveryRows.map(row=>[row.recipient,row.status,row.dsn]),[
+ ['second@example.test','bounced','5.1.1'],
+ ['recipient@example.test','sent','2.0.0'],
+]);
 async function main(){
  const url=process.env.TEST_DATABASE_URL;if(!url||!new URL(url).pathname.includes('test'))throw Error('TEST_DATABASE_URL must explicitly select a test database.');
  const admin=new Pool({connectionString:url});const schema='qa_product_'+randomBytes(6).toString('hex');let db;
@@ -54,6 +70,7 @@ async function main(){
  const member=(await db.query("insert into tenant_members(tenant_id,email,role,password_hash) values($1,'manager@example.test','tenant_admin',$2) returning id",[a.id,managerHash]))[0];const tenantToken=auth.issue({sub:'manager@example.test',role:'tenant_admin',tenantId:a.id}).accessToken;
  const app=await NestFactory.create(AppModule,{logger:false});try{app.use('/api/v1',adminSessionMiddleware);await app.listen(0,'127.0.0.1');const origin=await app.getUrl();const call=(method,path,body)=>fetch(origin+path,{method,headers:{Authorization:'Bearer '+tenantToken,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
  assert.equal((await fetch(origin+'/api/v1/auth/me',{headers:{Cookie:'30nice_admin='+tenantToken,Origin:'https://evil.example'}})).status,403);assert.equal((await fetch(origin+'/api/v1/auth/me',{headers:{Cookie:'30nice_admin='+tenantToken,Origin:origin}})).status,200);
+ assert.equal((await call('GET','/api/v1/tenants/'+b.id+'/smtp-deliveries')).status,403);
  const foreignSmtp='/api/v1/tenants/'+b.id+'/mailboxes/'+box.id+'/smtp-passwords';
  assert.equal((await call('GET',foreignSmtp)).status,403);
  assert.equal((await call('POST',foreignSmtp,{name:'Fixture website'})).status,403);

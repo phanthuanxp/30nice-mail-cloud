@@ -1,0 +1,17 @@
+.smtpLog { padding:14px; border:1px solid #dce6f3; border-radius:12px; min-width:0; }
+.smtpLogHeader,.smtpLogSummary > div { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; }
+.smtpLogHeader h3 { margin:0; }
+.smtpLog p,.smtpLog small { color:#52667f; font-size:13px; overflow-wrap:anywhere; }
+.smtpLogFilters { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,155px),1fr)); gap:10px; }
+.smtpLogFilters label { display:grid; gap:5px; min-width:0; font-size:13px; }
+.smtpLogFilters input,.smtpLogFilters select { width:100%; min-width:0; padding:8px; border:1px solid #dce6f3; border-radius:8px; background:#fff; }
+.smtpLogSummary { margin-top:12px; padding:10px; border-radius:8px; background:#f3f7fc; overflow-wrap:anywhere; }
+.smtpLog summary { cursor:pointer; color:#2458a6; }
+.smtpLogSummary > div { padding:6px 0; }
+.smtpLogTable { overflow-x:auto; }
+.smtpLogTable table { min-width:620px; }
+.smtpLogTable td { overflow-wrap:anywhere; vertical-align:top; }
+.smtpLogTable small { display:block; margin:4px 0; }
+.smtpLogState[data-state="sent"] { color:#146443; }
+.smtpLogState[data-state="deferred"] { color:#814d08; }
+.smtpLogState[data-state="bounced"] { color:#b42318; }
