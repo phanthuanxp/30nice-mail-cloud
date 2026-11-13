@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import {useCustomer} from './CustomerContext';
+import SmtpDeliveryLog from './SmtpDeliveryLog';
 import SmtpPasswords from './SmtpPasswords';
 import DnsCopyButton from './DnsCopyButton';
 import './mailbox-panel.css';
@@ -22,6 +23,7 @@ export default function MailboxPanel({fixedTenantId,fixedDomainId}:{fixedTenantI
  const [tenants,setTenants]=useState<Tenant[]>([]),[tenant,setTenant]=useState(''),[domains,setDomains]=useState<Domain[]>([]),[domain,setDomain]=useState(''),[boxes,setBoxes]=useState<Box[]>([]),[jobs,setJobs]=useState<Job[]>([]);
  const [user,setUser]=useState(''),[quota,setQuota]=useState('3'),[password,setPassword]=useState(''),[revealed,setRevealed]=useState(''),[message,setMessage]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[capacity,setCapacity]=useState<Capacity|null>(null),[capacityError,setCapacityError]=useState(''),[drafts,setDrafts]=useState<Record<string,string>>({});
  const [query,setQuery]=useState(""),[domainFilter,setDomainFilter]=useState(""),[stateFilter,setStateFilter]=useState("");
+ const [showSmtpLog,setShowSmtpLog]=useState(false);
  const [smtpBox,setSmtpBox]=useState('');
  const [loadFailed,setLoadFailed]=useState(false);
  const sequence=useRef(0),capacitySequence=useRef(0),current=useRef(tenant);current.current=tenant;
@@ -51,6 +53,10 @@ export default function MailboxPanel({fixedTenantId,fixedDomainId}:{fixedTenantI
   {error&&<p className="mailboxMessage error" role="alert">{error}</p>}{message&&<p className="mailboxMessage" role="status">{message}</p>}
   {revealed&&<div className="mailboxPasswordReveal"><div><b>Mật khẩu ban đầu · lưu vào nơi an toàn</b><code>{revealed}</code><small>Chờ cấp phát được xác nhận trước khi đăng nhập. Đối soát không đổi mật khẩu hộp thư đã có.</small></div><DnsCopyButton value={revealed} label="Mật khẩu hộp thư"/><button className="mailboxPasswordDismiss" aria-label="Ẩn mật khẩu" onClick={()=>setRevealed('')}>×</button></div>}
   <details className="provisioningHistory mailboxSection" open={pending||jobs.some(job=>["failed","dead_letter"].includes(job.status))}><summary>Tiến độ cấp phát ({jobs.length})</summary>{!jobs.length&&<p className="emptyText">Chưa có tác vụ cấp phát.</p>}{jobs.slice(0,12).map(j=><div className="provisioningJobRow" key={j.id}><span className={`provisioningJobStatus ${j.status}`}>{({queued:'Đang chờ',running:'Đang xử lý',succeeded:'Đã xác nhận',failed:'Cần kiểm tra',dead_letter:'Cần đối soát'} as Record<string,string>)[j.status]||j.status}</span><div className="provisioningJobInfo"><b>{j.idempotencyKey.replace(/^mailbox:/,'')}</b>{j.lastError&&<small>{j.lastError}</small>}</div><small>{j.attempts} lần xử lý</small>{['failed','dead_letter'].includes(j.status)&&<button className="ghost" disabled={busy} onClick={()=>void act(`provisioning-jobs/${j.id}/retry`)}>Đối soát / thử lại</button>}</div>)}</details>
+  {tenant&&<details className="mailboxSection" onToggle={event=>setShowSmtpLog(event.currentTarget.open)}>
+   <summary>Nhật ký SMTP</summary>
+   {showSmtpLog&&<SmtpDeliveryLog key={tenant} tenantId={tenant}/>}
+  </details>}
   <section className="mailboxDirectory" aria-labelledby="mailbox-directory-title" aria-busy={loading}>
    <div className="mailboxDirectoryHead">
     <h3 id="mailbox-directory-title">Danh sách hộp thư</h3>

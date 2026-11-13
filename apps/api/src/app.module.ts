@@ -1,3 +1,4 @@
+import {smtpDeliveries} from './smtp-deliveries';
 import {randomBytes} from 'node:crypto';
 import {Body,Controller,ForbiddenException,Get,Headers,Module,NotFoundException,Param,Post,Put,Req,Res,Query,StreamableFile,BadRequestException,UploadedFiles,UseInterceptors} from '@nestjs/common';
 import {MemberInvitations} from './member-invitations';
@@ -61,6 +62,22 @@ class ApiController {
   @Put('api/v1/tenants/:tenantId/onboarding') async saveOnboarding(@Param('tenantId') tenantId:string,@Body() body:{domainId?:unknown},@Headers('authorization') authorization?:string){const session=await this.requireWriteAccess(authorization);this.assertSessionTenant(session,tenantId);return this.service.saveOnboarding(await this.service.assertTenant(tenantId,session.tenantId),body.domainId);}
   @Post('api/v1/tenants/:tenantId/domains/:domainId/connect') async connectDomain(@Param('tenantId') tenantId:string,@Param('domainId') domainId:string,@Headers('authorization') authorization?:string){const session=await this.requireWriteAccess(authorization);this.assertSessionTenant(session,tenantId);return this.service.connectDomain(await this.service.assertTenant(tenantId,session.tenantId),domainId,session.sub);}
   @Get('api/v1/tenants/:tenantId/capacity') async capacity(@Param('tenantId') tenantId:string,@Query('domain') domain:string,@Headers('authorization') authorization?:string){const session=await this.requireReadAccess(authorization);this.assertSessionTenant(session,tenantId);if(typeof domain!=='string')throw new BadRequestException('Chọn tên miền.');return this.service.mailboxCapacity(await this.service.assertTenant(tenantId,session.tenantId),domain);}
+  @Get('api/v1/tenants/:tenantId/smtp-deliveries')
+  async listSmtpDeliveries(@Param('tenantId') tenantId:string,@Headers('authorization') header?:string,@Res({passthrough:true}) response?:any){
+    const session=await this.requireReadAccess(header);
+    this.assertSessionTenant(session,tenantId);
+    await this.service.assertTenant(tenantId,session.tenantId);
+    response?.setHeader('Cache-Control','no-store');
+    const boxes=await this.service.databaseAccess().query<{address:string}>(
+      'select address from mailboxes where tenant_id=$1::uuid',[tenantId],
+    );
+    if(!boxes)throw new BadRequestException('Chưa đọc được danh sách hộp thư.');
+    if(!boxes.length)return [];
+    try{
+      return smtpDeliveries(await this.mailcow.postfixLogs(),new Set(boxes.map(box=>box.address.toLowerCase())));
+    }catch{throw new BadRequestException('Chưa tải được nhật ký SMTP. Hãy kiểm tra kết nối Mailcow và thử lại.');}
+  }
+
   @Get('api/v1/tenants/:tenantId/mailboxes') async mailboxes(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope?: string,@Headers('authorization') authorization?:string){const session=await this.requireReadAccess(authorization);this.assertSessionTenant(session,tenantId);return this.service.listMailboxes(await this.service.assertTenant(tenantId,session.role==='super_admin'?scope:session.tenantId));}
   @Get('api/v1/tenants/:tenantId/provisioning-jobs') async provisioningJobs(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope?: string,@Headers('authorization') authorization?:string){const session=await this.requireReadAccess(authorization);this.assertSessionTenant(session,tenantId);return this.service.listProvisioningJobs(await this.service.assertTenant(tenantId,session.role==='super_admin'?scope:session.tenantId));}
   @Post('api/v1/tenants/:tenantId/provisioning-jobs/:jobId/retry') async retryMailboxProvisioning(@Param('tenantId') tenantId:string,@Param('jobId') jobId:string,@Headers('x-tenant-id') scope:string|undefined,@Headers('authorization') authorization?:string){const session=await this.requireWriteAccess(authorization);this.assertSessionTenant(session,tenantId);return this.service.retryMailboxProvisioning(await this.service.assertTenant(tenantId,session.role==='super_admin'?scope:session.tenantId),jobId,session.sub);}

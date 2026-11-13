@@ -1,3 +1,4 @@
+import type {PostfixLine} from './smtp-deliveries';
 import {Injectable} from '@nestjs/common';
 export type AdapterMode='mock'|'dry-run'|'production';
 @Injectable()
@@ -22,6 +23,30 @@ export class MailcowService {
     if(!items.length||items.some((item:{type?:string}|null)=>!item||item.type!=='success')) throw new Error('Mailcow chưa xác nhận thao tác thành công. Cần kiểm tra lại trạng thái.');
     return result;
   }
+  private postfixSnapshot?:{expiresAt:number;request:Promise<PostfixLine[]>};
+
+  postfixLogs(){
+    if(this.postfixSnapshot&&this.postfixSnapshot.expiresAt>Date.now())return this.postfixSnapshot.request;
+    const request=this.fetchPostfixLogs().catch(error=>{
+      if(this.postfixSnapshot?.request===request)this.postfixSnapshot=undefined;
+      throw error;
+    });
+    this.postfixSnapshot={expiresAt:Date.now()+15000,request};
+    return request;
+  }
+
+  private async fetchPostfixLogs():Promise<PostfixLine[]>{
+    if(this.mode!=='production'||!this.baseUrl||!this.apiKey)throw new Error('Mailcow chưa sẵn sàng.');
+    const response=await fetch(`${this.baseUrl}/api/v1/get/logs/postfix/5000`,{
+      headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(10000),
+    });
+    if(!response.ok)throw new Error('Không tải được nhật ký Postfix.');
+    const data=await response.json();
+    if(data&&typeof data==='object'&&!Array.isArray(data)&&Object.keys(data).length===0)return [];
+    if(!Array.isArray(data))throw new Error('Nhật ký Postfix không hợp lệ.');
+    return data.slice(0,5000);
+  }
+
   async smtpPasswords(address:string){
     if(this.mode!=='production'||!this.baseUrl||!this.apiKey)throw new Error('Mailcow chưa sẵn sàng.');
     const response=await fetch(`${this.baseUrl}/api/v1/get/app-passwd/all/${encodeURIComponent(address)}`,{
