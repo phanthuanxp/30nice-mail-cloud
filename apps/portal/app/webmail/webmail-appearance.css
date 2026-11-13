@@ -1,11 +1,11 @@
 .wm-app,
 .wm-login-page {
   color-scheme: light;
-  --wm-frame: light-dark(#f3f6fc, #15191f);
-  --wm-surface: light-dark(#ffffff, #1e232b);
-  --wm-subtle: light-dark(#f4f7fc, #252b35);
-  --wm-hover: light-dark(#eaf1fc, #303a49);
-  --wm-border: light-dark(#dce4ef, #394453);
+  --wm-frame: light-dark(#f3f6fc, #0B1E3F);
+  --wm-surface: light-dark(#ffffff, #12294D);
+  --wm-subtle: light-dark(#f4f7fc, #173156);
+  --wm-hover: light-dark(#eaf1fc, #213D65);
+  --wm-border: light-dark(#dce4ef, #46628A);
   --wm-text: light-dark(#19283f, #edf2fa);
   --wm-muted: light-dark(#53647a, #b1becf);
   --wm-accent: light-dark(#1c59a9, #a7caff);
