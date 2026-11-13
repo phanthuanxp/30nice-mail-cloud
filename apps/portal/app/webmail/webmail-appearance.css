@@ -305,3 +305,97 @@
   display: inline;
   margin: 0;
 }
+
+.wm-app .wm-compose-btn,
+.wm-app .wm-mobile-compose button {
+  background: #215fc2;
+  color: #fff;
+}
+
+.wm-app .wm-compose-btn:hover,
+.wm-app .wm-mobile-compose button:hover {
+  background: #194eaa;
+}
+
+.wm-app .wm-compose-btn {
+  width: min(180px, 90%);
+  margin-inline: auto;
+}
+
+.wm-app .wm-desktop-menu {
+  display: grid;
+  flex: none;
+  margin-right: -16px;
+}
+
+.wm-compose-title button {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+}
+
+.wm-compose-title button:hover {
+  background: var(--wm-hover);
+}
+
+.wm-compose-expanded {
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.wm-compose-expanded .wm-compose-window {
+  width: min(1020px, 100%);
+  height: min(850px, calc(100dvh - 32px));
+  border-radius: 14px;
+}
+
+.wm-attachment-advice {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 8px 0 0;
+  color: var(--wm-muted);
+  line-height: 1.5;
+}
+
+.wm-attachment-advice svg {
+  flex: none;
+  color: var(--wm-accent);
+}
+
+@media (min-width: 721px) {
+  .wm-sidebar-compact .wm-sidebar {
+    width: 76px;
+    padding-inline: 8px;
+  }
+
+  .wm-sidebar-compact .wm-compose-btn {
+    width: 50px;
+  }
+
+  .wm-sidebar-compact .wm-folder-link {
+    justify-content: center;
+    padding-inline: 0;
+    border-radius: 20px;
+  }
+
+  .wm-sidebar-compact :is(.wm-compose-btn span, .wm-folder-link span, .wm-folder-link b, .wm-storage) {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .wm-app .wm-desktop-menu {
+    display: none;
+  }
+
+  .wm-compose-expanded {
+    padding: 0;
+  }
+
+  .wm-compose-expanded .wm-compose-window {
+    height: 100dvh;
+    border-radius: 0;
+  }
+}
