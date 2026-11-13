@@ -1,4 +1,5 @@
-import {Body,Controller,ForbiddenException,Get,Headers,Module,Param,Post,Put,Req,Res,Query,StreamableFile,BadRequestException,UploadedFiles,UseInterceptors} from '@nestjs/common';
+import {randomBytes} from 'node:crypto';
+import {Body,Controller,ForbiddenException,Get,Headers,Module,NotFoundException,Param,Post,Put,Req,Res,Query,StreamableFile,BadRequestException,UploadedFiles,UseInterceptors} from '@nestjs/common';
 import {MemberInvitations} from './member-invitations';
 import {TenantOperations} from './tenant-operations';
 import {MailCloudService} from './mail-cloud.service';
@@ -65,6 +66,55 @@ class ApiController {
   @Post('api/v1/tenants/:tenantId/provisioning-jobs/:jobId/retry') async retryMailboxProvisioning(@Param('tenantId') tenantId:string,@Param('jobId') jobId:string,@Headers('x-tenant-id') scope:string|undefined,@Headers('authorization') authorization?:string){const session=await this.requireWriteAccess(authorization);this.assertSessionTenant(session,tenantId);return this.service.retryMailboxProvisioning(await this.service.assertTenant(tenantId,session.role==='super_admin'?scope:session.tenantId),jobId,session.sub);}
   @Post('api/v1/tenants/:tenantId/mailboxes') async createMailbox(@Param('tenantId') tenantId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {address?: string; quotaGb?: number; password?:string}, @Headers('authorization') authorization?:string){const session=await this.requireWriteAccess(authorization);this.assertSessionTenant(session,tenantId);return this.service.createMailbox(await this.service.assertTenant(tenantId,session.role==='super_admin'?scope:session.tenantId),body,session.sub);}
   @Put('api/v1/tenants/:tenantId/mailboxes/:mailboxId') async updateMailbox(@Param('tenantId') tenantId: string, @Param('mailboxId') mailboxId: string, @Headers('x-tenant-id') scope: string|undefined, @Body() body: {quotaGb?: number; status?: 'active'|'disabled'}, @Headers('authorization') authorization?:string){const session=await this.requireWriteAccess(authorization);this.assertSessionTenant(session,tenantId);return this.service.updateMailbox(await this.service.assertTenant(tenantId,session.role==='super_admin'?scope:session.tenantId),mailboxId,body,session.sub);}
+  private async smtpMailbox(tenantId:string,mailboxId:string,header?:string){
+    const session=await this.requireReadAccess(header);
+    this.assertSessionTenant(session,tenantId);
+    if(!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(mailboxId))throw new BadRequestException('Hộp thư không hợp lệ.');
+    const db=this.service.databaseAccess();
+    const [box]=await db.query<{address:string;status:string;provisioning_state:string}>(
+      'select address,status,provisioning_state from mailboxes where id=$1::uuid and tenant_id=$2::uuid',[mailboxId,tenantId],
+    )??[];
+    if(!box)throw new NotFoundException('Không tìm thấy hộp thư.');
+    return {box,db,session};
+  }
+
+  @Get('api/v1/tenants/:tenantId/mailboxes/:mailboxId/smtp-passwords')
+  async listSmtpPasswords(@Param('tenantId') tenantId:string,@Param('mailboxId') mailboxId:string,@Headers('authorization') header?:string){
+    const {box}=await this.smtpMailbox(tenantId,mailboxId,header);
+    try{return await this.mailcow.smtpPasswords(box.address);}
+    catch{throw new BadRequestException('Chưa tải được mật khẩu SMTP. Hãy kiểm tra kết nối Mailcow rồi thử lại.');}
+  }
+
+  @Post('api/v1/tenants/:tenantId/mailboxes/:mailboxId/smtp-passwords')
+  async createSmtpPassword(@Param('tenantId') tenantId:string,@Param('mailboxId') mailboxId:string,@Body() body:{name?:unknown},@Headers('authorization') header?:string,@Res({passthrough:true}) response?:any){
+    const {box,db,session}=await this.smtpMailbox(tenantId,mailboxId,header);
+    const name=typeof body?.name==='string'?body.name.trim():'';
+    if(!/^[\p{L}\p{N} ._-]{1,48}$/u.test(name))throw new BadRequestException('Nhập tên website từ 1 đến 48 ký tự, gồm chữ, số, dấu cách, chấm, gạch ngang hoặc gạch dưới.');
+    if(box.status!=='active'||box.provisioning_state!=='ready')throw new BadRequestException('Hộp thư cần sẵn sàng để cấp mật khẩu SMTP.');
+    response?.setHeader('Cache-Control','no-store');
+    const password=`S!${randomBytes(24).toString('base64url')}9a`;
+    try{
+      await this.mailcow.addSmtpPassword(box.address,`30NICE SMTP ${randomBytes(8).toString('hex')} ${name}`,password);
+    }catch{throw new BadRequestException('Chưa xác nhận được việc tạo mật khẩu. Hãy tải lại danh sách và thu hồi mục vừa tạo nếu có trước khi thử lại.');}
+    await db.query("insert into audit_logs(tenant_id,actor_email,action,resource_type,resource_id) values($1::uuid,$2,'mailbox.smtp_password_create','mailbox',$3)",[tenantId,session.sub,mailboxId]).catch(()=>undefined);
+    return {password};
+  }
+
+  @Post('api/v1/tenants/:tenantId/mailboxes/:mailboxId/smtp-passwords/:passwordId/revoke')
+  async revokeSmtpPassword(@Param('tenantId') tenantId:string,@Param('mailboxId') mailboxId:string,@Param('passwordId') passwordId:string,@Headers('authorization') header?:string){
+    const {box,db,session}=await this.smtpMailbox(tenantId,mailboxId,header);
+    try{
+      const passwords=await this.mailcow.smtpPasswords(box.address);
+      if(!passwords.some(item=>item.id===passwordId))throw new NotFoundException('Không tìm thấy mật khẩu SMTP của hộp thư này.');
+      await this.mailcow.revokeSmtpPassword(passwordId);
+    }catch(error){
+      if(error instanceof NotFoundException)throw error;
+      throw new BadRequestException('Chưa xác nhận thu hồi mật khẩu. Hãy tải lại danh sách để kiểm tra.');
+    }
+    await db.query("insert into audit_logs(tenant_id,actor_email,action,resource_type,resource_id) values($1::uuid,$2,'mailbox.smtp_password_revoke','mailbox',$3)",[tenantId,session.sub,mailboxId]).catch(()=>undefined);
+    return {ok:true};
+  }
+
   @Post('api/v1/tenants/:tenantId/mailboxes/:mailboxId/reset-password') async resetMailboxPassword(@Param('tenantId') tenantId:string,@Param('mailboxId') mailboxId:string,@Headers('x-tenant-id') scope:string|undefined,@Headers('authorization') authorization?:string){const session=await this.requireWriteAccess(authorization);this.assertSessionTenant(session,tenantId);return this.service.resetMailboxPassword(await this.service.assertTenant(tenantId,session.role==='super_admin'?scope:session.tenantId),mailboxId,session.sub);}
 }
 

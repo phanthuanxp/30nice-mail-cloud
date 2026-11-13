@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import {useCustomer} from './CustomerContext';
+import SmtpPasswords from './SmtpPasswords';
 import DnsCopyButton from './DnsCopyButton';
 import './mailbox-panel.css';
 type Tenant={id:string;name:string};type Domain={id:string;domain:string;status:string;provisioningStatus?:string};
@@ -21,13 +22,14 @@ export default function MailboxPanel({fixedTenantId,fixedDomainId}:{fixedTenantI
  const [tenants,setTenants]=useState<Tenant[]>([]),[tenant,setTenant]=useState(''),[domains,setDomains]=useState<Domain[]>([]),[domain,setDomain]=useState(''),[boxes,setBoxes]=useState<Box[]>([]),[jobs,setJobs]=useState<Job[]>([]);
  const [user,setUser]=useState(''),[quota,setQuota]=useState('3'),[password,setPassword]=useState(''),[revealed,setRevealed]=useState(''),[message,setMessage]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[capacity,setCapacity]=useState<Capacity|null>(null),[capacityError,setCapacityError]=useState(''),[drafts,setDrafts]=useState<Record<string,string>>({});
  const [query,setQuery]=useState(""),[domainFilter,setDomainFilter]=useState(""),[stateFilter,setStateFilter]=useState("");
+ const [smtpBox,setSmtpBox]=useState('');
  const [loadFailed,setLoadFailed]=useState(false);
  const sequence=useRef(0),capacitySequence=useRef(0),current=useRef(tenant);current.current=tenant;
  const selected=domains.find(d=>d.id===domain),base=`/api/api/v1/tenants/${tenant}`;
  useEffect(()=>{let live=true;void request('/api/api/v1/tenants').then(rows=>{if(!Array.isArray(rows))throw Error('Dữ liệu khách hàng không hợp lệ.');if(live){setTenants(rows);setTenant(fixedTenantId?(rows.find((t:Tenant)=>t.id===fixedTenantId)?.id||''):(rows.find((t:Tenant)=>t.id===customer.tenantId)?.id||rows[0]?.id||''));}}).catch(e=>{if(live)setError(e.message);});return()=>{live=false;};},[fixedTenantId,customer.tenantId]);
  async function load(){if(!tenant)return;const target=tenant,id=++sequence.current;setLoading(true);try{const [ds,bs,js]=await Promise.all(['domains','mailboxes','provisioning-jobs'].map(p=>request(`${base}/${p}`)));if(![ds,bs,js].every(Array.isArray))throw Error('Dữ liệu hộp thư không hợp lệ.');if(id===sequence.current&&target===current.current){setDomains(ds);setBoxes(bs);setJobs(js);setLoadFailed(false);setDomain(old=>ds.some((d:Domain)=>d.id===old)?old:ds.find((d:Domain)=>d.id===fixedDomainId)?.id||ds.find((d:Domain)=>d.status==='verified'&&d.provisioningStatus==='ready')?.id||'');}}catch(e){if(id===sequence.current&&target===current.current){setLoadFailed(true);setError(e instanceof Error?e.message:'Không tải được hộp thư.');}}finally{if(id===sequence.current&&target===current.current)setLoading(false);}}
  async function limits(){const id=++capacitySequence.current;setCapacity(null);setCapacityError('');if(!tenant||!selected)return;try{const data=await request(`${base}/capacity?domain=${encodeURIComponent(selected.domain)}`);if(id===capacitySequence.current)setCapacity(data);}catch(e){if(id===capacitySequence.current)setCapacityError(e instanceof Error?e.message:'Chưa kiểm tra được hạn mức.');}}
- useEffect(()=>{setQuery('');setDomainFilter('');setStateFilter('');setDrafts({});setLoadFailed(false);setBoxes([]);setDomains([]);setJobs([]);setDomain('');setRevealed('');setPassword('');setUser('');setMessage('');setError('');setCapacity(null);void load();return()=>{sequence.current++;capacitySequence.current++;};},[tenant]);
+ useEffect(()=>{setSmtpBox('');setQuery('');setDomainFilter('');setStateFilter('');setDrafts({});setLoadFailed(false);setBoxes([]);setDomains([]);setJobs([]);setDomain('');setRevealed('');setPassword('');setUser('');setMessage('');setError('');setCapacity(null);void load();return()=>{sequence.current++;capacitySequence.current++;};},[tenant]);
  useEffect(()=>{setRevealed('');setPassword('');setUser('');void limits();return()=>{capacitySequence.current++;};},[tenant,domain]);
  const pending=jobs.some(j=>['queued','running'].includes(j.status));
  useEffect(()=>{if(!pending)return;const timer=setInterval(()=>{void load();void limits();},4000);return()=>clearInterval(timer);},[pending,tenant,domain]);
@@ -82,15 +84,16 @@ export default function MailboxPanel({fixedTenantId,fixedDomainId}:{fixedTenantI
        <span>Hạn mức thực <b>{limit===null?'Chưa xác nhận':size(limit)+' GiB'}</b></span>
        {used!==null&&limit!==null&&limit>0&&<progress aria-label={`Dung lượng đã dùng của ${box.address}`} value={Math.min(used,limit)} max={limit}/>}
       </div>
-      {state==='Sẵn sàng'&&<details className="mailboxManage mailboxSmtp">
+      <details className="mailboxManage mailboxSmtp" open={smtpBox===box.id} onToggle={event=>{const open=event.currentTarget.open;setSmtpBox(current=>open?box.id:current===box.id?'':current);}}>
        <summary>Kết nối SMTP với website</summary>
        <dl className="mailboxSmtpFields">
         <div><dt>Máy chủ SMTP</dt><dd><code>mx.30nice.vn</code><DnsCopyButton value="mx.30nice.vn" label="Máy chủ SMTP"/></dd></div>
         <div><dt>Cổng và mã hóa</dt><dd><b>587 · STARTTLS</b><small>Hoặc 465 nếu website dùng SSL/TLS.</small></dd></div>
         <div><dt>Tên đăng nhập và địa chỉ gửi</dt><dd><code>{box.address}</code><DnsCopyButton value={box.address} label="Địa chỉ SMTP"/></dd></div>
-        <div><dt>Xác thực SMTP</dt><dd><b>Bật</b><small>Dùng mật khẩu của hộp thư này.</small></dd></div>
+        <div><dt>Xác thực SMTP</dt><dd><b>Bật</b><small>Dùng mật khẩu ứng dụng SMTP hoặc mật khẩu hộp thư.</small></dd></div>
        </dl>
-      </details>}
+       {smtpBox===box.id&&<SmtpPasswords key={base+'/'+box.id} endpoint={`${base}/mailboxes/${box.id}/smtp-passwords`} canCreate={state==='Sẵn sàng'}/>}
+      </details>
       <details className="mailboxManage">
        <summary>Quản lý hộp thư</summary>
        <div className="mailboxManageActions">
