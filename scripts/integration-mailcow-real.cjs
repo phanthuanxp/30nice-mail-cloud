@@ -29,6 +29,27 @@ async function main(){
    return;
   }
   const webmail=new WebmailService(db);const login=await webmail.login(address,created.temporaryPassword,'internal-qa');const token=login.token;const folders=await webmail.folders(token);assert.ok(folders.some(f=>f.path==='INBOX'));assert.ok(folders.some(f=>f.specialUse==='\\Drafts'),'Fresh mailbox must expose Drafts');
+  if(process.env.WEBMAIL_MOVE_TEST_ONLY==='YES'){
+   const trash=folders.find(folder=>folder.specialUse==='\\Trash');
+   assert.ok(trash,'Fresh mailbox must expose Trash');
+   const subject='Move regression '+nonce;
+   const client=webmail.makeClient(address,created.temporaryPassword);
+   await client.connect();
+   try{
+    await client.append('INBOX',Buffer.from('From: '+address+'\r\nTo: '+address+'\r\nSubject: '+subject+'\r\n\r\nInternal fixture'));
+   }finally{await client.logout();}
+   const source=(await webmail.messages(token,'INBOX',nonce,1)).messages.find(message=>message.subject===subject);
+   assert.ok(source);
+   await webmail.read(token,'INBOX',source.uid);
+   assert.equal(JSON.stringify(await webmail.moveToTrash(token,'INBOX',source.uid)),'{"ok":true}');
+   assert.ok(!(await webmail.messages(token,'INBOX',nonce,1)).messages.some(message=>message.subject===subject));
+   const deleted=(await webmail.messages(token,trash.path,nonce,1)).messages.find(message=>message.subject===subject);
+   assert.ok(deleted);
+   assert.equal(JSON.stringify(await webmail.moveToInbox(token,trash.path,deleted.uid)),'{"ok":true}');
+   assert.ok((await webmail.messages(token,'INBOX',nonce,1)).messages.some(message=>message.subject===subject));
+   console.log('PASS: opened a real IMAP message, moved it to Trash, serialized the result, and restored it.');
+   return;
+  }
   const restarted=new WebmailService(db);await restarted.resumeSession(token);assert.equal(restarted.profile(token).email,address);
   const draftId=randomUUID();await restarted.saveDraft(token,{draftId,to:address,subject:'Internal draft '+nonce,text:'Internal acceptance only',html:'<p>Internal acceptance only</p>'},[{filename:'qa.txt',contentType:'text/plain',buffer:Buffer.from('fixture attachment')}]);const drafts=folders.find(f=>f.specialUse==='\\Drafts');assert.ok((await restarted.messages(token,drafts.path,'',1)).messages.length>0);
   const result=await restarted.send(token,{to:address,subject:'Internal loopback '+nonce,text:'Internal acceptance to this same test mailbox only.',html:'<p>Internal acceptance to this same test mailbox only.</p>'});assert.ok(result.accepted.includes(address));

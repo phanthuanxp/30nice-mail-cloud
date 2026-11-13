@@ -521,16 +521,26 @@ export class WebmailService {
     });
   }
 
+  private async moveMessage(client: ImapFlow, folder: string, destination: string, uid: number) {
+    if (folder === destination) throw new BadRequestException('Thư đã nằm trong thư mục đích.');
+    const lock = await client.getMailboxLock(folder);
+    try {
+      const moved = await client.messageMove(uid, destination, { uid: true });
+      if (!moved) throw new BadRequestException('Không chuyển được thư. Hãy làm mới danh sách rồi thử lại.');
+      return { ok: true };
+    } finally {
+      lock.release();
+    }
+  }
+
   async moveToTrash(token: string | undefined, folder: string, uid: number) {
     this.assertUid(uid);
     return this.withClient(token, async client => {
       const folders = await client.list();
       if (!folders.some(item => item.path === folder)) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
-      const trash = folders.find(item => item.specialUse === '\\Trash') || folders.find(item => /^(trash|deleted items|thư đã xóa)$/i.test(item.name));
+      const trash = folders.find(item => item.specialUse === '\\Trash') || folders.find(item => /^(trash|deleted items|thư đã xóa|thùng rác)$/i.test(item.name));
       if (!trash) throw new BadRequestException('Hộp thư chưa có thư mục Thùng rác');
-      const lock = await client.getMailboxLock(folder);
-      try { return await client.messageMove(uid, trash.path, { uid: true }); }
-      finally { lock.release(); }
+      return this.moveMessage(client, folder, trash.path, uid);
     });
   }
 
@@ -541,9 +551,7 @@ export class WebmailService {
       if (!folders.some(item => item.path === folder)) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
       const archive = folders.find(item => item.specialUse === '\\Archive') || folders.find(item => /^(archive|archived|lưu trữ)$/i.test(item.name));
       if (!archive) throw new BadRequestException('Hộp thư chưa có thư mục Lưu trữ');
-      const lock = await client.getMailboxLock(folder);
-      try { return await client.messageMove(uid, archive.path, { uid: true }); }
-      finally { lock.release(); }
+      return this.moveMessage(client, folder, archive.path, uid);
     });
   }
 
@@ -554,9 +562,7 @@ export class WebmailService {
       if (!folders.some(item => item.path === folder)) throw new BadRequestException('Không tìm thấy thư mục trong hộp thư này');
       const inbox = folders.find(item => item.specialUse === '\\Inbox') || folders.find(item => item.path.toUpperCase() === 'INBOX');
       if (!inbox) throw new BadRequestException('Không tìm thấy thư mục Hộp thư đến');
-      const lock = await client.getMailboxLock(folder);
-      try { return await client.messageMove(uid, inbox.path, { uid: true }); }
-      finally { lock.release(); }
+      return this.moveMessage(client, folder, inbox.path, uid);
     });
   }
 
