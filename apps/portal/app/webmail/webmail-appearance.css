@@ -293,3 +293,15 @@
   background: var(--wm-hover);
   color: var(--wm-accent);
 }
+
+.wm-support-contact {
+  margin-top: 9px;
+  color: var(--wm-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.wm-support-contact .wm-support-link {
+  display: inline;
+  margin: 0;
+}
