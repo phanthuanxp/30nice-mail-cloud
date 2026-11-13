@@ -4,7 +4,7 @@ import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallbac
 import { updateMessageFlagState } from './webmail-state';
 import { plainTextToHtml } from './webmail-compose';
 import { RequestSequence } from './request-sequence.cjs';
-import { Archive, ArrowLeft, Bold, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File as FileIcon, Forward, Image as ImageIcon, Inbox, Italic, Link2, List, ListOrdered, LogOut, Mail, MailOpen, Maximize2, Menu, Minimize2, Moon, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Sun, Trash2, Underline, X } from 'lucide-react';
+import { Archive, ArrowLeft, Bold, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, File as FileIcon, Forward, Image as ImageIcon, Inbox, Italic, Link2, List, ListOrdered, LogOut, Mail, MailOpen, Maximize2, Menu, Minus, Minimize2, Moon, Paperclip, PenLine, RefreshCw, Reply, Search, Send, Settings, ShieldCheck, Square, Star, Sun, Trash2, Underline, X } from 'lucide-react';
 
 type Folder = { path: string; name: string; specialUse: string | null; messages: number; unread: number };
 type Address = { address: string; name: string };
@@ -188,6 +188,7 @@ export default function WebmailClient() {
   const [mobileNav, setMobileNav] = useState(false);
   const [sidebarCompact, setSidebarCompact] = useState(false);
   const [composeExpanded, setComposeExpanded] = useState(false);
+  const [composeMinimized, setComposeMinimized] = useState(false);
   const [activePanel, setActivePanel] = useState<'settings' | 'help' | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   const [systemDark, setSystemDark] = useState(false);
@@ -389,6 +390,7 @@ export default function WebmailClient() {
   }
 
   async function resumeDraft(item: MailItem, sequence = readerRequestSequence.current.begin()) {
+    if (composeMinimized) { setComposeMinimized(false); return; }
     setBusy(true); setError('');
     try {
       const draftFolder = item.folder || folder;
@@ -415,7 +417,7 @@ export default function WebmailClient() {
       try { await request('/drafts/discard', { method: 'POST', body: JSON.stringify({ draftId: compose.draftId, replaceUid: compose.replaceUid }) }); }
       catch (reason) { setError(reason instanceof Error ? reason.message : 'Không xóa được thư nháp.'); return; }
     }
-    setCompose(null); setComposeExpanded(false); setShowCc(false); setShowBcc(false);
+    setCompose(null); setComposeExpanded(false); setComposeMinimized(false); setShowCc(false); setShowBcc(false);
   }
 
   function closeReader() {
@@ -456,7 +458,7 @@ export default function WebmailClient() {
 
       if (event.key === 'Escape') {
         if (deleteConfirmation) { event.preventDefault(); if (!busy) setDeleteConfirmation(null); }
-        else if (compose) { event.preventDefault(); void closeComposer(); }
+        else if (compose && !composeMinimized) { event.preventDefault(); void closeComposer(); }
         else if (activePanel) setActivePanel(null);
         else if (selected) closeReader();
         else if (mobileNav) setMobileNav(false);
@@ -471,7 +473,7 @@ export default function WebmailClient() {
       }
       if (event.key.toLowerCase() === 'c') {
         event.preventDefault();
-        setCompose(newCompose()); setShowCc(false); setShowBcc(false); setMobileNav(false);
+        if (compose) { setComposeMinimized(false); } else { setCompose(newCompose()); setShowCc(false); setShowBcc(false); } setMobileNav(false);
         return;
       }
       if (event.key.toLowerCase() === 'j' || event.key.toLowerCase() === 'k') {
@@ -486,7 +488,7 @@ export default function WebmailClient() {
     }
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
-  }, [activePanel, busy, closeComposer, compose, deleteConfirmation, items, mobileNav, openMessage, selected, signatureHtml, signatureText]);
+  }, [activePanel, busy, closeComposer, compose, composeMinimized, deleteConfirmation, items, mobileNav, openMessage, selected, signatureHtml, signatureText]);
 
   async function updateFlag(item: MailItem, flag: 'seen' | 'unseen' | 'flagged' | 'unflagged') {
     try {
@@ -612,7 +614,7 @@ export default function WebmailClient() {
           : `Máy chủ từ chối tất cả ${result.rejected.length} người nhận. Địa chỉ vẫn được giữ trong biểu mẫu và bản nháp; hãy sửa rồi gửi lại.`);
         return;
       }
-      setCompose(null); setComposeExpanded(false); setShowCc(false); setShowBcc(false);
+      setCompose(null); setComposeExpanded(false); setComposeMinimized(false); setShowCc(false); setShowBcc(false);
       setNotice(!result.draftRemoved ? 'Đã gửi thư. Bản nháp cũ vẫn còn trong Thư nháp; hãy xóa bản nháp cũ, không gửi lại để tránh gửi trùng.' : result.savedToSent ? 'Đã gửi thư và lưu bản sao trong Đã gửi.' : 'Máy chủ đã gửi thư nhưng chưa lưu được bản sao vào Đã gửi. Không gửi lại để tránh gửi trùng.');
       const sent = folders.find(item => item.specialUse === '\\Sent'); if (sent) { setPage(1); setFolder(sent.path); setQuery(''); setSearchInput(''); setListFilter('all'); closeReader(); await loadMessages(sent.path, '', 1, 'all'); try { await loadFolders(); } catch { setNotice('Đã gửi thư. Không tải lại được danh sách thư mục; hãy bấm Làm mới.'); } }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không gửi được thư.'); }
@@ -631,6 +633,7 @@ export default function WebmailClient() {
   }
 
   function replyTo(message: Message, replyAll = false) {
+    if (composeMinimized) { setComposeMinimized(false); return; }
     const sender = message.from[0];
     const own = account.toLowerCase();
     const toAddresses = [...new Set([sender?.address || '', ...(replyAll ? message.to.map(value => value.address) : [])].filter(value => value && value.toLowerCase() !== own))];
@@ -641,6 +644,7 @@ export default function WebmailClient() {
   }
 
   async function forwardMessage(message: Message) {
+    if (composeMinimized) { setComposeMinimized(false); return; }
     setBusy(true); setError('');
     try {
       const files = await downloadAttachments(message.uid, message.folder, message.attachments);
@@ -702,7 +706,7 @@ export default function WebmailClient() {
     </header>
     <div className={`wm-layout ${sidebarCompact ? 'wm-sidebar-compact' : ''}`} inert={Boolean(deleteConfirmation)}>
       <aside id="wm-sidebar" className={`wm-sidebar ${mobileNav ? 'wm-sidebar-open' : ''}`}>
-        <button className="wm-compose-btn" aria-label="Soạn thư" title="Soạn thư" onClick={() => { setCompose(newCompose()); setShowCc(false); setShowBcc(false); setMobileNav(false); }}><PenLine size={20} /><span>Soạn thư</span></button>
+        <button className="wm-compose-btn" aria-label="Soạn thư" title="Soạn thư" onClick={() => { if (compose) { setComposeMinimized(false); } else { setCompose(newCompose()); setShowCc(false); setShowBcc(false); } setMobileNav(false); }}><PenLine size={20} /><span>Soạn thư</span></button>
         <nav className="wm-folder-nav" aria-label="Thư mục">
           {folders.map(item => { const Icon = FOLDER_ICONS[item.specialUse || ''] || (item.path.toUpperCase() === 'INBOX' ? Inbox : Mail); return <button key={item.path} title={folderLabel(item)} aria-label={folderLabel(item)} className={`wm-folder-link ${folder === item.path && !selected && !query ? 'active' : ''}`} onClick={() => { setPage(1); setFolder(item.path); setQuery(''); setSearchInput(''); closeReader(); setMobileNav(false); }}><Icon size={18} /><span>{folderLabel(item)}</span>{item.unread > 0 && <b>{item.unread}</b>}</button>; })}
         </nav>
@@ -731,12 +735,14 @@ export default function WebmailClient() {
           <label className="wm-display-toggle"><input type="checkbox" checked={largeText} onChange={event=>setLargeText(event.target.checked)}/> Chữ lớn khi đọc thư</label>
           <p>Cài đặt hiển thị được lưu trên trình duyệt này.</p>
         </div><label>Chữ ký khi soạn thư mới<textarea aria-label="Chữ ký email" value={signatureText} maxLength={5000} rows={5} onChange={event=>setSignatureText(event.target.value)} placeholder="Họ tên, chức danh, doanh nghiệp, điện thoại…"/></label><button type="button" className="wm-button-primary" disabled={savingSignature} onClick={()=>void saveSignature()}>{savingSignature?'Đang lưu…':'Lưu chữ ký'}</button><p>Chữ ký được lưu theo hộp thư và tự thêm vào thư mới; thư nháp hiện có giữ nguyên nội dung.</p><div className="wm-account-detail"><ShieldCheck size={17} /><span><b>Tài khoản đang đăng nhập</b><small>{account}</small></span></div></div> : <div className="wm-preferences-content"><p className="wm-help-intro">Các thao tác thường dùng trong hộp thư 30NICE.</p><ol className="wm-help-steps"><li><b>Soạn thư:</b> chọn “Soạn thư”, nhập người nhận và nội dung, sau đó bấm “Gửi”. Thư nháp tự lưu khi bạn dừng gõ.</li><li><b>Tìm thư:</b> nhập từ khóa để tìm trong Hộp thư đến, Đã gửi và các thư mục thông thường; thư rác và thùng rác được loại khỏi kết quả.</li><li><b>Quản lý thư:</b> dùng dấu sao, lưu trữ, đánh dấu đã đọc/chưa đọc hoặc chuyển thư vào Thùng rác. Trong Thùng rác, có thể khôi phục thư hoặc xác nhận xóa vĩnh viễn.</li><li><b>Tệp đính kèm:</b> tối đa 5 tệp, mỗi tệp tối đa 5 MB và tổng dung lượng tối đa 20 MB.</li></ol><h3 className="wm-shortcut-heading">Phím tắt</h3><ul className="wm-shortcut-list"><li><kbd>/</kbd><span>Tìm thư</span></li><li><kbd>C</kbd><span>Soạn thư mới</span></li><li><kbd>J</kbd><span>Mở thư cũ hơn tiếp theo</span></li><li><kbd>K</kbd><span>Mở thư mới hơn</span></li><li><kbd>Esc</kbd><span>Đóng cửa sổ hoặc quay lại danh sách</span></li></ul><p className="wm-help-intro">Phím tắt tự tạm dừng khi bạn đang nhập nội dung.</p><div className="wm-support-contact">Liên hệ hỗ trợ: 0345.07.6789 (zalo) - <a className="wm-support-link" href="mailto:admin@30nice.vn?subject=H%E1%BB%97%20tr%E1%BB%A3%2030NICE%20Mail">admin@30nice.vn</a></div></div>}</section></div>}
-    {compose && <div className={`wm-modal-backdrop ${composeExpanded ? 'wm-compose-expanded' : ''}`} onMouseDown={event => { if (event.target === event.currentTarget) void closeComposer(); }}><form className="wm-compose-window" role="dialog" aria-modal="true" aria-label="Soạn thư" onSubmit={sendMessage}><div className="wm-compose-title"><b>Thư mới</b><span className="wm-draft-status" role="status">{draftStatus}</span><button type="button" className="wm-compose-resize"
+    {compose && <div className={`wm-modal-backdrop ${composeMinimized ? 'wm-compose-minimized' : composeExpanded ? 'wm-compose-expanded' : ''}`} onMouseDown={event => { if (event.target === event.currentTarget) void closeComposer(); }}><form className="wm-compose-window" role="dialog" aria-modal={!composeMinimized} aria-label="Soạn thư" onSubmit={sendMessage}><div className="wm-compose-title">{composeMinimized ? <button type="button" className="wm-compose-restore" onClick={() => setComposeMinimized(false)} aria-label="Mở lại khung soạn">{compose.subject || 'Thư mới'}</button> : <b>Thư mới</b>}<span className="wm-draft-status" role="status">{draftStatus}</span>{!composeMinimized && <button type="button" aria-label="Thu gọn khung soạn" title="Thu gọn khung soạn"
+      onClick={() => setComposeMinimized(true)}><Minus size={17} /></button>}
+      {!composeMinimized && <button type="button" className="wm-compose-resize"
       aria-label={composeExpanded ? 'Thu nhỏ khung soạn' : 'Mở rộng khung soạn'}
       title={composeExpanded ? 'Thu nhỏ khung soạn' : 'Mở rộng khung soạn'}
       onClick={() => setComposeExpanded(!composeExpanded)}>
       {composeExpanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
-    </button><button type="button" aria-label="Đóng" disabled={busy} onClick={() => void closeComposer()}><X size={18} /></button></div><div className="wm-compose-fields" inert={busy}><label className="wm-compose-field"><span>Đến</span><div className="wm-recipient-input"><input value={compose.to} onFocus={() => { setActiveRecipient('to'); setSuggestionIndex(0); }} onKeyDown={event => recipientKeyDown(event, 'to')} onChange={event => { setCompose({ ...compose, to: event.target.value }); setActiveRecipient('to'); setSuggestionIndex(0); }} placeholder="Địa chỉ email, cách nhau bằng dấu phẩy" />{recipientSuggestions('to').length > 0 && <div className="wm-contact-suggestions" role="listbox" aria-label="Người nhận gần đây">{recipientSuggestions('to').map((contact, index) => <button type="button" role="option" aria-selected={index === suggestionIndex} key={contact.address} onMouseDown={event => event.preventDefault()} onClick={() => selectRecipient('to', contact)}><b>{contact.name || contact.address}</b>{contact.name && <small>{contact.address}</small>}</button>)}</div>}</div><span className="wm-recipient-actions"><button type="button" onClick={() => setShowCc(!showCc)}>CC</button><button type="button" onClick={() => setShowBcc(!showBcc)}>BCC</button></span></label>{showCc && <label className="wm-compose-field"><span>CC</span><div className="wm-recipient-input"><input value={compose.cc} onFocus={() => { setActiveRecipient('cc'); setSuggestionIndex(0); }} onKeyDown={event => recipientKeyDown(event, 'cc')} onChange={event => { setCompose({ ...compose, cc: event.target.value }); setActiveRecipient('cc'); setSuggestionIndex(0); }} placeholder="Thêm người nhận CC" />{recipientSuggestions('cc').length > 0 && <div className="wm-contact-suggestions" role="listbox" aria-label="Người nhận gần đây">{recipientSuggestions('cc').map((contact, index) => <button type="button" role="option" aria-selected={index === suggestionIndex} key={contact.address} onMouseDown={event => event.preventDefault()} onClick={() => selectRecipient('cc', contact)}><b>{contact.name || contact.address}</b>{contact.name && <small>{contact.address}</small>}</button>)}</div>}</div></label>}{showBcc && <label className="wm-compose-field"><span>BCC</span><div className="wm-recipient-input"><input value={compose.bcc} onFocus={() => { setActiveRecipient('bcc'); setSuggestionIndex(0); }} onKeyDown={event => recipientKeyDown(event, 'bcc')} onChange={event => { setCompose({ ...compose, bcc: event.target.value }); setActiveRecipient('bcc'); setSuggestionIndex(0); }} placeholder="Người nhận ẩn, cách nhau bằng dấu phẩy" />{recipientSuggestions('bcc').length > 0 && <div className="wm-contact-suggestions" role="listbox" aria-label="Người nhận gần đây">{recipientSuggestions('bcc').map((contact, index) => <button type="button" role="option" aria-selected={index === suggestionIndex} key={contact.address} onMouseDown={event => event.preventDefault()} onClick={() => selectRecipient('bcc', contact)}><b>{contact.name || contact.address}</b>{contact.name && <small>{contact.address}</small>}</button>)}</div>}</div></label>}<label className="wm-compose-field"><span>Chủ đề</span><input value={compose.subject} onChange={event => setCompose({ ...compose, subject: event.target.value })} placeholder="Thêm chủ đề" /></label><RichEditor key={compose.draftId} html={compose.html} onChange={(html,text) => setCompose(current => current ? { ...current, html, text } : current)} />{compose.files.length > 0 && <div className="wm-compose-files">{compose.files.map((file,index) => <span key={`${file.name}-${index}`}><Paperclip size={14} />{file.name}<small>{formatBytes(file.size)}</small><button type="button" aria-label={`Bỏ tệp ${file.name}`} onClick={() => setCompose(current => current ? { ...current, files: current.files.filter((_,position) => position !== index) } : null)}><X size={14} /></button></span>)}</div>}</div><div className="wm-compose-footer"><button className="wm-send-btn" disabled={busy}><Send size={16} />{busy ? 'Đang gửi…' : 'Gửi'}</button><input ref={fileInput} className="wm-file-input" type="file" multiple disabled={busy} onChange={addFiles} /><button type="button" className="wm-icon-btn" disabled={busy} aria-label="Đính kèm tệp" title="Đính kèm tệp (tối đa 5 tệp, 20 MB)" onClick={() => fileInput.current?.click()}><Paperclip size={18} /></button><span>{account}</span></div></form></div>}
-    <div className="wm-mobile-compose" inert={Boolean(deleteConfirmation)}><button onClick={() => { setCompose(newCompose()); setShowCc(false); setShowBcc(false); }}><PenLine size={19} /></button></div>
+    </button>}<button type="button" aria-label="Đóng" disabled={busy} onClick={() => void closeComposer()}><X size={18} /></button></div><div className="wm-compose-fields" inert={busy}><label className="wm-compose-field"><span>Đến</span><div className="wm-recipient-input"><input value={compose.to} onFocus={() => { setActiveRecipient('to'); setSuggestionIndex(0); }} onKeyDown={event => recipientKeyDown(event, 'to')} onChange={event => { setCompose({ ...compose, to: event.target.value }); setActiveRecipient('to'); setSuggestionIndex(0); }} placeholder="Địa chỉ email, cách nhau bằng dấu phẩy" />{recipientSuggestions('to').length > 0 && <div className="wm-contact-suggestions" role="listbox" aria-label="Người nhận gần đây">{recipientSuggestions('to').map((contact, index) => <button type="button" role="option" aria-selected={index === suggestionIndex} key={contact.address} onMouseDown={event => event.preventDefault()} onClick={() => selectRecipient('to', contact)}><b>{contact.name || contact.address}</b>{contact.name && <small>{contact.address}</small>}</button>)}</div>}</div><span className="wm-recipient-actions"><button type="button" onClick={() => setShowCc(!showCc)}>CC</button><button type="button" onClick={() => setShowBcc(!showBcc)}>BCC</button></span></label>{showCc && <label className="wm-compose-field"><span>CC</span><div className="wm-recipient-input"><input value={compose.cc} onFocus={() => { setActiveRecipient('cc'); setSuggestionIndex(0); }} onKeyDown={event => recipientKeyDown(event, 'cc')} onChange={event => { setCompose({ ...compose, cc: event.target.value }); setActiveRecipient('cc'); setSuggestionIndex(0); }} placeholder="Thêm người nhận CC" />{recipientSuggestions('cc').length > 0 && <div className="wm-contact-suggestions" role="listbox" aria-label="Người nhận gần đây">{recipientSuggestions('cc').map((contact, index) => <button type="button" role="option" aria-selected={index === suggestionIndex} key={contact.address} onMouseDown={event => event.preventDefault()} onClick={() => selectRecipient('cc', contact)}><b>{contact.name || contact.address}</b>{contact.name && <small>{contact.address}</small>}</button>)}</div>}</div></label>}{showBcc && <label className="wm-compose-field"><span>BCC</span><div className="wm-recipient-input"><input value={compose.bcc} onFocus={() => { setActiveRecipient('bcc'); setSuggestionIndex(0); }} onKeyDown={event => recipientKeyDown(event, 'bcc')} onChange={event => { setCompose({ ...compose, bcc: event.target.value }); setActiveRecipient('bcc'); setSuggestionIndex(0); }} placeholder="Người nhận ẩn, cách nhau bằng dấu phẩy" />{recipientSuggestions('bcc').length > 0 && <div className="wm-contact-suggestions" role="listbox" aria-label="Người nhận gần đây">{recipientSuggestions('bcc').map((contact, index) => <button type="button" role="option" aria-selected={index === suggestionIndex} key={contact.address} onMouseDown={event => event.preventDefault()} onClick={() => selectRecipient('bcc', contact)}><b>{contact.name || contact.address}</b>{contact.name && <small>{contact.address}</small>}</button>)}</div>}</div></label>}<label className="wm-compose-field"><span>Chủ đề</span><input value={compose.subject} onChange={event => setCompose({ ...compose, subject: event.target.value })} placeholder="Thêm chủ đề" /></label><RichEditor key={compose.draftId} html={compose.html} onChange={(html,text) => setCompose(current => current ? { ...current, html, text } : current)} />{compose.files.length > 0 && <div className="wm-compose-files">{compose.files.map((file,index) => <span key={`${file.name}-${index}`}><Paperclip size={14} />{file.name}<small>{formatBytes(file.size)}</small><button type="button" aria-label={`Bỏ tệp ${file.name}`} onClick={() => setCompose(current => current ? { ...current, files: current.files.filter((_,position) => position !== index) } : null)}><X size={14} /></button></span>)}</div>}</div><div className="wm-compose-footer"><button className="wm-send-btn" disabled={busy}><Send size={16} />{busy ? 'Đang gửi…' : 'Gửi'}</button><input ref={fileInput} className="wm-file-input" type="file" multiple disabled={busy} onChange={addFiles} /><button type="button" className="wm-icon-btn" disabled={busy} aria-label="Đính kèm tệp" title="Đính kèm tệp (tối đa 5 tệp, 20 MB)" onClick={() => fileInput.current?.click()}><Paperclip size={18} /></button><span>{account}</span></div></form></div>}
+    <div className="wm-mobile-compose" inert={Boolean(deleteConfirmation)}><button onClick={() => { if (compose) { setComposeMinimized(false); } else { setCompose(newCompose()); setShowCc(false); setShowBcc(false); } }}><PenLine size={19} /></button></div>
   </div>;
 }
