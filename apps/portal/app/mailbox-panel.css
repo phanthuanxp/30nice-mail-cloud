@@ -33,3 +33,11 @@
 .mailboxSmtpFields dd small { flex-basis:100%; color:#52667f; }
 .mailboxSmtpFields .dnsCopyButton { width:32px; height:32px; }
 @media(max-width:640px) { .mailboxSmtpFields { grid-template-columns:minmax(0,1fr); } }
+.smtpCredentials { margin-top:12px; padding:12px; border:1px solid #dce6f3; border-radius:9px; overflow-wrap:anywhere; }
+.smtpCredentials h4 { margin:0; }
+.smtpCredentials p { color:#465f79; font-size:13px; }
+.smtpCredentials form,.smtpCredentialRow { display:flex; flex-wrap:wrap; align-items:end; gap:8px; }
+.smtpCredentials label { display:grid; gap:6px; min-width:0; flex:1 1 180px; }
+.smtpCredentials input { min-width:0; width:100%; padding:8px; border:1px solid #dce6f3; border-radius:8px; }
+.smtpCredentialRow { padding:8px 0; border-top:1px solid #edf1f7; align-items:center; }
+.smtpCredentialRow b { flex:1 1 140px; min-width:0; }

@@ -12,6 +12,22 @@ async function main(){
   await migrate(url);db=new DatabaseService();assert.equal(await mailcow.getDomain(domain),null);ownsFixture=true;await mailcow.ensureDomain(domain);assert.ok(await mailcow.getDomain(domain));
   const tenant=(await db.query("insert into tenants(name,slug) values('Internal acceptance',$1) returning id::text",['qa-'+nonce]))[0];await db.query("insert into domains(tenant_id,domain,status,provisioning_status) values($1,$2,'verified','ready')",[tenant.id,domain]);
   const ops=new MailboxOperations(db,mailcow);const created=await ops.create(tenant.id,{address,quotaGb:1},'system:internal-qa');await ops.processOne();const job=(await db.query('select status,last_error from provisioning_jobs where id=$1',[created.provisioningJobId]))[0];assert.equal(job.status,'succeeded',job.last_error||'Provider did not confirm mailbox');
+  if(process.env.SMTP_PASSWORD_TEST_ONLY==='YES'){
+   const nodemailer=require('nodemailer');
+   const password='S!'+randomBytes(24).toString('base64url')+'9a';
+   await mailcow.addSmtpPassword(address,'30NICE SMTP '+nonce+' Internal QA',password);
+   const credentials=await mailcow.smtpPasswords(address);
+   assert.equal(credentials.length,1);
+   assert.deepEqual(Object.keys(credentials[0]).sort(),['active','id','name']);
+   const smtp=()=>nodemailer.createTransport({host:'mx.30nice.vn',port:587,requireTLS:true,auth:{user:address,pass:password},socketTimeout:12000});
+   try{assert.equal(await smtp().verify(),true);}
+   finally{await mailcow.revokeSmtpPassword(credentials[0].id);}
+   assert.deepEqual(await mailcow.smtpPasswords(address),[]);
+   await new Promise(resolve=>setTimeout(resolve,310000));
+   await assert.rejects(smtp().verify(),{code:'EAUTH'});
+   console.log('PASS: real SMTP app password creation, SMTP authentication, revocation and rejected reuse.');
+   return;
+  }
   const webmail=new WebmailService(db);const login=await webmail.login(address,created.temporaryPassword,'internal-qa');const token=login.token;const folders=await webmail.folders(token);assert.ok(folders.some(f=>f.path==='INBOX'));assert.ok(folders.some(f=>f.specialUse==='\\Drafts'),'Fresh mailbox must expose Drafts');
   const restarted=new WebmailService(db);await restarted.resumeSession(token);assert.equal(restarted.profile(token).email,address);
   const draftId=randomUUID();await restarted.saveDraft(token,{draftId,to:address,subject:'Internal draft '+nonce,text:'Internal acceptance only',html:'<p>Internal acceptance only</p>'},[{filename:'qa.txt',contentType:'text/plain',buffer:Buffer.from('fixture attachment')}]);const drafts=folders.find(f=>f.specialUse==='\\Drafts');assert.ok((await restarted.messages(token,drafts.path,'',1)).messages.length>0);

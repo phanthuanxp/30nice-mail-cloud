@@ -11,7 +11,7 @@ export class MailcowService {
     try { const response=await fetch(`${this.baseUrl}/api/v1/get/domain/all`,{headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(5000)}); return {mode:this.mode,healthy:response.ok,configured:true,httpStatus:response.status}; }
     catch { return {mode:this.mode,healthy:false,configured:true}; }
   }
-  private async request(path:string,body:Record<string,unknown>){
+  private async request(path:string,body:Record<string,unknown>|string[]){
     if(this.mode==='mock') return [{type:'success',msg:'mock'}];
     if(this.mode==='dry-run') return [{type:'success',msg:'dry-run'}];
     if(!this.baseUrl||!this.apiKey) throw new Error('Mailcow API is not configured');
@@ -21,6 +21,30 @@ export class MailcowService {
     const items=Array.isArray(result)?result:[result];
     if(!items.length||items.some((item:{type?:string}|null)=>!item||item.type!=='success')) throw new Error('Mailcow chưa xác nhận thao tác thành công. Cần kiểm tra lại trạng thái.');
     return result;
+  }
+  async smtpPasswords(address:string){
+    if(this.mode!=='production'||!this.baseUrl||!this.apiKey)throw new Error('Mailcow chưa sẵn sàng.');
+    const response=await fetch(`${this.baseUrl}/api/v1/get/app-passwd/all/${encodeURIComponent(address)}`,{
+      headers:{'X-API-Key':this.apiKey},signal:AbortSignal.timeout(10000),
+    });
+    if(!response.ok)throw new Error('Không đọc được mật khẩu SMTP.');
+    const rows=await response.json();
+    if(rows&&typeof rows==='object'&&!Array.isArray(rows)&&Object.keys(rows).length===0)return [];
+    if(!Array.isArray(rows))throw new Error('Danh sách mật khẩu SMTP không hợp lệ.');
+    return rows.flatMap(row=>{
+      const name=typeof row?.name==='string'?row.name.match(/^30NICE SMTP [a-f0-9]{16} (.+)$/):null;
+      if(!name||row.mailbox!==address||!/^\d+$/.test(String(row.id))||Number(row.smtp_access)!==1)return [];
+      return [{id:String(row.id),name:name[1],active:Number(row.active)===1}];
+    });
+  }
+  async addSmtpPassword(address:string,name:string,password:string){
+    if(this.mode!=='production')throw new Error('Mailcow chưa sẵn sàng.');
+    await this.request('/api/v1/add/app-passwd',{
+      username:address,app_name:name,app_passwd:password,app_passwd2:password,active:1,protocols:['smtp_access'],
+    });
+  }
+  async revokeSmtpPassword(id:string){
+    await this.request('/api/v1/delete/app-passwd',[id]);
   }
   async getDkim(domain:string):Promise<{selector:string;value:string}|null>{
     if(this.mode!=='production')return null;
