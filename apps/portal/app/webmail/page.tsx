@@ -3,6 +3,7 @@ import WebmailClient from './webmail-client';
 import './webmail.css';
 import './webmail-fixes.css';
 import './webmail-search.css';
+import './webmail-appearance.css';
 
 export const metadata: Metadata = {
   title: '30NICE Mail — Hộp thư doanh nghiệp',
