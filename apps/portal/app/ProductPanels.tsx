@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useState} from 'react';import {useCustomer} from './CustomerContext';import './product-panels.css';
-type Tenant={id:string;name:string};type Plan={id:string;name:string;storageGb:number;mailboxLimit:number;mailboxMaxGb:number;active:boolean;customerCount?:number|null;priceVnd?:number|null;billingPeriod?:'month'|'year'|null;trialDays?:number|null};
+type Tenant={id:string;name:string};type Plan={id:string;name:string;storageGb:number;mailboxLimit:number;mailboxMaxGb:number;active:boolean;customerCount?:number|null;monthlyPriceVnd?:number|null;yearlyPriceVnd?:number|null;trialDays?:number|null};
 type PlanPreview={eligible:boolean;issues:string[];mailboxCount:number;allocatedBytes:number};
 const planNumber=new Intl.NumberFormat("vi-VN",{maximumFractionDigits:3});
 async function api(path:string,body?:unknown,method=body?'POST':'GET'){const r=await fetch('/api/api/v1'+path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const d=await r.json();if(!r.ok)throw Error(typeof d.message==='string'?d.message:'Không hoàn tất yêu cầu.');return d;}
@@ -52,13 +52,13 @@ function planOrder(name: string) {
 }
 
 export function ServicePlans(){
- const [priceEditor,setPriceEditor]=useState<{id:string;price:string;period:'month'|'year'}|null>(null);
+ const [priceEditor,setPriceEditor]=useState<{id:string;monthly:string;yearly:string}|null>(null);
  const [priceMessage,setPriceMessage]=useState('');
  async function savePrice(){
   if(!priceEditor)return;
   setBusy(true);setError('');setPriceMessage('');
   try{
-   await api(`/plans/${priceEditor.id}/price`,{priceVnd:priceEditor.price===''?null:Number(priceEditor.price),billingPeriod:priceEditor.period},'PUT');
+   await api(`/plans/${priceEditor.id}/price`,{monthlyPriceVnd:priceEditor.monthly===''?null:Number(priceEditor.monthly),yearlyPriceVnd:priceEditor.yearly===''?null:Number(priceEditor.yearly)},'PUT');
    setRows(await api('/plans'));setPriceEditor(null);setPriceMessage('Đã lưu đơn giá.');
   }catch(e){setError(e instanceof Error?e.message:'Chưa lưu được đơn giá.');}
   finally{setBusy(false);}
@@ -69,8 +69,8 @@ export function ServicePlans(){
  return <section className="productPanel"><h2>Gói dịch vụ</h2><p>Tạo mẫu hạn mức, sau đó áp dụng ở hồ sơ khách hàng. Tạo mẫu không thay đổi dịch vụ đang chạy.</p>{error&&<p className="productError" role="alert">{error}</p>}<form className="productForm" onSubmit={e=>{e.preventDefault();void create();}}><label>Tên gói<input required maxLength={120} value={name} onChange={e=>setName(e.target.value)} disabled={busy}/></label><label>Số hộp thư<input required type="number" min="1" max="100000" value={count} onChange={e=>setCount(e.target.value)} disabled={busy}/></label><label>Tổng dung lượng (GiB)<input required type="number" min="1" max="100000" value={storage} onChange={e=>setStorage(e.target.value)} disabled={busy}/></label><label>Tối đa mỗi hộp thư (GiB)<input required type="number" min="1" max={Math.min(1000,Number(storage))} value={max} onChange={e=>setMax(e.target.value)} disabled={busy}/></label><button className="primary" disabled={busy}>{busy?'Đang tạo…':'Tạo mẫu gói'}</button></form>{!rows&&!error&&<p role="status">Đang tải danh sách gói…</p>}
  {priceMessage&&<p className="productSuccess" role="status">{priceMessage}</p>}
  {priceEditor&&<form className="productForm" onSubmit={e=>{e.preventDefault();void savePrice();}}>
-  <label>Đơn giá (VNĐ)<input type="number" min="0" max="2147483647" step="1" value={priceEditor.price} disabled={busy} onChange={e=>setPriceEditor({...priceEditor,price:e.target.value})}/></label>
-  <label>Kỳ tính phí<select value={priceEditor.period} disabled={busy} onChange={e=>setPriceEditor({...priceEditor,period:e.target.value==='year'?'year':'month'})}><option value="month">Theo tháng</option><option value="year">Theo năm</option></select></label>
+  <label>Giá tháng (VNĐ)<input type="number" min="0" max="2147483647" step="1" value={priceEditor.monthly} disabled={busy} onChange={e=>setPriceEditor({...priceEditor,monthly:e.target.value})}/></label>
+  <label>Giá năm (VNĐ)<input type="number" min="0" max="2147483647" step="1" value={priceEditor.yearly} disabled={busy} onChange={e=>setPriceEditor({...priceEditor,yearly:e.target.value})}/></label>
   <button className="primary" disabled={busy}>Lưu đơn giá</button><button type="button" disabled={busy} onClick={()=>setPriceEditor(null)}>Hủy</button>
   <p>Để trống đơn giá nếu chưa niêm yết.</p>
  </form>}
@@ -81,8 +81,9 @@ export function ServicePlans(){
    <tbody>{[...rows].sort((a,b)=>planOrder(a.name)-planOrder(b.name)).map(item=><tr key={item.id}>
     <th scope="row">{item.name}<small className="planDescription">{emailPlans.find(plan=>plan.name===item.name)?.description}</small></th><td>{planNumber.format(item.mailboxLimit)}</td><td>{planNumber.format(item.storageGb)} GiB</td>
     <td>{planNumber.format(item.mailboxMaxGb)} GiB</td><td>{item.trialDays?`Miễn phí · ${item.trialDays} ngày`:<>{
-      item.priceVnd==null?'Chưa đặt':`${planNumber.format(item.priceVnd)} ₫/${item.billingPeriod==='year'?'năm':'tháng'}`
-     } <button type="button" disabled={busy} aria-label={`Sửa đơn giá ${item.name}`} onClick={()=>setPriceEditor({id:item.id,price:item.priceVnd==null?'':String(item.priceVnd),period:item.billingPeriod??'month'})}>Sửa</button></>}</td><td>{item.customerCount==null?'—':planNumber.format(item.customerCount)}</td>
+      item.monthlyPriceVnd==null?'Chưa đặt giá tháng':`${planNumber.format(item.monthlyPriceVnd)} ₫/tháng`
+     }<br/>{item.yearlyPriceVnd==null?'Chưa đặt giá năm':`${planNumber.format(item.yearlyPriceVnd)} ₫/năm`}
+     {' '}<button type="button" disabled={busy} aria-label={`Sửa đơn giá ${item.name}`} onClick={()=>setPriceEditor({id:item.id,monthly:String(item.monthlyPriceVnd??''),yearly:String(item.yearlyPriceVnd??'')})}>Sửa</button></>}</td><td>{item.customerCount==null?'—':planNumber.format(item.customerCount)}</td>
     <td>{item.active?'Đang cung cấp':'Ngừng cung cấp'}</td>
    </tr>)}</tbody>
   </table>

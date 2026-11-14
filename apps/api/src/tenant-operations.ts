@@ -13,6 +13,7 @@ export class TenantOperations{
   return await this.db.query(`
    select p.id::text,p.name,p.mailbox_limit as "mailboxLimit",p.storage_gb as "storageGb",
           p.mailbox_max_gb as "mailboxMaxGb",p.active,p.price_vnd as "priceVnd",p.billing_period as "billingPeriod",p.trial_days as "trialDays",
+          p.monthly_price_vnd as "monthlyPriceVnd",p.yearly_price_vnd as "yearlyPriceVnd",
           case when $1::boolean then (select count(*)::int from tenants t where t.plan_id=p.id) end as "customerCount"
    from service_plans p order by p.created_at
   `,[includeCustomerCounts])??[];
@@ -22,10 +23,20 @@ export class TenantOperations{
   if(!name||name.length>120||![body.mailboxLimit,body.storageGb,body.mailboxMaxGb].every(n=>typeof n==='number'&&Number.isInteger(n)&&n>=1)||Number(body.mailboxLimit)>100000||Number(body.storageGb)>100000||Number(body.mailboxMaxGb)>1000||Number(body.mailboxMaxGb)>Number(body.storageGb))throw new BadRequestException('Tên gói và hạn mức không hợp lệ. Dung lượng mỗi hộp thư không được lớn hơn tổng gói.');
   try{return (await this.db.query('insert into service_plans(name,mailbox_limit,storage_gb,mailbox_max_gb) values($1,$2,$3,$4) returning id::text,name',[name,body.mailboxLimit,body.storageGb,body.mailboxMaxGb]))?.[0];}catch{throw new BadRequestException('Không tạo được gói; kiểm tra tên gói đã tồn tại chưa.');}
  }
- async updatePrice(id:string,body:{priceVnd?:unknown;billingPeriod?:unknown}={}){
-  const {priceVnd,billingPeriod}=body;
-  if(!/^[0-9a-f-]{36}$/i.test(id)||!(priceVnd===null||(typeof priceVnd==='number'&&Number.isInteger(priceVnd)&&priceVnd>=0&&priceVnd<=2147483647&&(billingPeriod==='month'||billingPeriod==='year'))))throw new BadRequestException('Đơn giá hoặc kỳ tính phí không hợp lệ.');
-  const rows=await this.db.query('update service_plans set price_vnd=$2,billing_period=$3 where id::text=$1 and trial_days is null returning id::text',[id,priceVnd,priceVnd===null?null:billingPeriod]);
+ async updatePrice(id:string,body:{priceVnd?:unknown;billingPeriod?:unknown;monthlyPriceVnd?:unknown;yearlyPriceVnd?:unknown}={}){
+  const validPrice=(value:unknown)=>value===null||(typeof value==='number'&&Number.isInteger(value)&&value>=0&&value<=2147483647);
+  const dual='monthlyPriceVnd' in body||'yearlyPriceVnd' in body;
+  const {priceVnd,billingPeriod,monthlyPriceVnd,yearlyPriceVnd}=body;
+  const valid=dual?validPrice(monthlyPriceVnd)&&validPrice(yearlyPriceVnd):
+   validPrice(priceVnd)&&(priceVnd===null||billingPeriod==='month'||billingPeriod==='year');
+  if(!/^[0-9a-f-]{36}$/i.test(id)||!valid)throw new BadRequestException('Đơn giá hoặc kỳ tính phí không hợp lệ.');
+  const monthly=dual?monthlyPriceVnd:billingPeriod==='month'?priceVnd:null;
+  const yearly=dual?yearlyPriceVnd:billingPeriod==='year'?priceVnd:null;
+  const rows=await this.db.query(`update service_plans
+   set monthly_price_vnd=case when $4::boolean or $5::text='month' or $5 is null then $2::int else monthly_price_vnd end,
+       yearly_price_vnd=case when $4::boolean or $5::text='year' or $5 is null then $3::int else yearly_price_vnd end,
+       price_vnd=coalesce($2::int,$3::int),billing_period=case when $2::int is not null then 'month' when $3::int is not null then 'year' end
+   where id::text=$1 and trial_days is null returning id::text`,[id,monthly,yearly,dual,dual||priceVnd===null?null:billingPeriod]);
   if(!rows?.length)throw new NotFoundException('Không tìm thấy gói trả phí.');
   return rows[0];
  }
