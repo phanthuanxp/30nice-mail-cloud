@@ -96,6 +96,8 @@ export class MailCloudService {
   async connectDomain(tenantId:string,domainId:string,actorEmail='system'){
     const row=await this.domainConfig(tenantId,domainId);if(row.status!=='verified')throw new BadRequestException('Cần xác minh quyền sở hữu tên miền trước.');
     try{
+      const expired=await this.database.query('select id from tenants where id=$1::uuid and trial_ends_at<=now()',[tenantId]);
+      if(expired?.length)throw new BadRequestException('Gói dùng thử đã hết hạn. Hãy nâng cấp gói để kết nối tên miền.');
       await this.mailcow.ensureDomain(row.domain);
       const policy=await this.database.query<{storage_gb:number;mailbox_limit:number;mailbox_max_gb:number}>('select p.storage_gb,p.mailbox_limit,p.mailbox_max_gb from tenants t join service_plans p on p.id=t.plan_id where t.id=$1::uuid',[tenantId]);
       if(policy?.[0])await this.mailcow.setDomainLimits(row.domain,policy[0].storage_gb,policy[0].mailbox_limit,policy[0].mailbox_max_gb);
@@ -108,7 +110,7 @@ export class MailCloudService {
     }
   }
   async onboarding(tenantId:string){
-    const tenant=(await this.database.query('select t.id::text,t.name,t.contact_email as "contactEmail",t.contact_phone as "contactPhone",t.plan_id::text as "planId",p.name as "planName" from tenants t left join service_plans p on p.id=t.plan_id where t.id=$1::uuid',[tenantId]))?.[0];
+    const tenant=(await this.database.query('select t.id::text,t.name,t.contact_email as "contactEmail",t.contact_phone as "contactPhone",t.plan_id::text as "planId",p.name as "planName",t.trial_ends_at as "trialEndsAt" from tenants t left join service_plans p on p.id=t.plan_id where t.id=$1::uuid',[tenantId]))?.[0];
     if(!tenant)throw new NotFoundException('Không tìm thấy khách hàng.');
     const [domains,mailboxes,members,progress]=await Promise.all([this.listDomains(tenantId),this.listMailboxes(tenantId),this.listMembers(tenantId),this.database.query('select o.domain_id::text as "domainId",l.last_login_at as "webmailConfirmedAt" from onboarding_progress o left join domain_webmail_logins l on l.domain_id=o.domain_id where o.tenant_id=$1::uuid',[tenantId])]);
     let progressRow=progress?.[0]??null;

@@ -100,6 +100,10 @@ export class MailcowService {
     );
     return exists?[{type:'success',msg:'Domain already exists'}]:this.addDomain(domain);
   }
+  async setDomainActive(domain:string,active:boolean){
+    await this.request('/api/v1/edit/domain',{items:[domain],attr:{active:active?1:0}});
+    if(this.mode==='production'&&Number((await this.getDomain(domain))?.active)!==(active?1:0))throw new Error('Chưa xác nhận được trạng thái tên miền.');
+  }
   async setDomainLimits(domain:string,storageGb:number,mailboxes:number,maxMailboxGb:number){
     await this.request('/api/v1/edit/domain',{items:[domain],attr:{quota:storageGb*1024,mailboxes,maxquota:maxMailboxGb*1024,defquota:Math.min(3,maxMailboxGb,storageGb)*1024}});
     if(this.mode==='production'){const d=await this.getDomain(domain);if(!d||Number(d.max_quota_for_domain)!==storageGb*1024**3||Number(d.max_num_mboxes_for_domain)!==mailboxes||Number(d.max_quota_for_mbox)!==maxMailboxGb*1024**3)throw new Error('Chưa xác nhận được hạn mức tên miền.');}

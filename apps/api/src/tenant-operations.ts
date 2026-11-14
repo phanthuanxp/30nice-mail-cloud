@@ -4,7 +4,7 @@ import {DatabaseService} from './database.service';
 import {MailcowService} from './mailcow.service';
 const GIB=1024**3;
 type Query=Parameters<Parameters<DatabaseService['transaction']>[0]>[0];
-type Plan=Record<string,unknown>&{id:string;storage_gb:number;mailbox_limit:number;mailbox_max_gb:number};
+type Plan=Record<string,unknown>&{id:string;storage_gb:number;mailbox_limit:number;mailbox_max_gb:number;trial_days:number|null};
 const formatGiB=(bytes:number)=>new Intl.NumberFormat('vi-VN',{maximumFractionDigits:4}).format(bytes/GIB);
 
 export class TenantOperations{
@@ -12,7 +12,7 @@ export class TenantOperations{
  async plans(includeCustomerCounts=false){
   return await this.db.query(`
    select p.id::text,p.name,p.mailbox_limit as "mailboxLimit",p.storage_gb as "storageGb",
-          p.mailbox_max_gb as "mailboxMaxGb",p.active,
+          p.mailbox_max_gb as "mailboxMaxGb",p.active,p.price_vnd as "priceVnd",p.billing_period as "billingPeriod",p.trial_days as "trialDays",
           case when $1::boolean then (select count(*)::int from tenants t where t.plan_id=p.id) end as "customerCount"
    from service_plans p order by p.created_at
   `,[includeCustomerCounts])??[];
@@ -21,6 +21,13 @@ export class TenantOperations{
   const name=typeof body.name==='string'?body.name.trim():'';
   if(!name||name.length>120||![body.mailboxLimit,body.storageGb,body.mailboxMaxGb].every(n=>typeof n==='number'&&Number.isInteger(n)&&n>=1)||Number(body.mailboxLimit)>100000||Number(body.storageGb)>100000||Number(body.mailboxMaxGb)>1000||Number(body.mailboxMaxGb)>Number(body.storageGb))throw new BadRequestException('Tên gói và hạn mức không hợp lệ. Dung lượng mỗi hộp thư không được lớn hơn tổng gói.');
   try{return (await this.db.query('insert into service_plans(name,mailbox_limit,storage_gb,mailbox_max_gb) values($1,$2,$3,$4) returning id::text,name',[name,body.mailboxLimit,body.storageGb,body.mailboxMaxGb]))?.[0];}catch{throw new BadRequestException('Không tạo được gói; kiểm tra tên gói đã tồn tại chưa.');}
+ }
+ async updatePrice(id:string,body:{priceVnd?:unknown;billingPeriod?:unknown}={}){
+  const {priceVnd,billingPeriod}=body;
+  if(!/^[0-9a-f-]{36}$/i.test(id)||!(priceVnd===null||(typeof priceVnd==='number'&&Number.isInteger(priceVnd)&&priceVnd>=0&&priceVnd<=2147483647&&(billingPeriod==='month'||billingPeriod==='year'))))throw new BadRequestException('Đơn giá hoặc kỳ tính phí không hợp lệ.');
+  const rows=await this.db.query('update service_plans set price_vnd=$2,billing_period=$3 where id::text=$1 and trial_days is null returning id::text',[id,priceVnd,priceVnd===null?null:billingPeriod]);
+  if(!rows?.length)throw new NotFoundException('Không tìm thấy gói trả phí.');
+  return rows[0];
  }
  private async assessPlan(query:Query,tenant:string,planId:unknown){
   if(typeof planId!=='string'||!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(planId)){
@@ -63,7 +70,22 @@ export class TenantOperations{
    const {plan,domains,preview}=await this.assessPlan(q,tenant,planId);
    if(!preview.eligible)throw new BadRequestException(preview.issues.join(' '));
    for(const d of domains)if(await this.mailcow.getDomain(d.domain))await this.mailcow.setDomainLimits(d.domain,plan.storage_gb,plan.mailbox_limit,plan.mailbox_max_gb);
-   const changed=await q('update tenants set plan_id=$2::uuid,updated_at=now() where id=$1::uuid returning id::text,plan_id::text as "planId"',[tenant,planId]);if(!changed.length)throw new NotFoundException('Khách hàng không tồn tại.');
+   if(!plan.trial_days){
+    const suspended=await q<{domain:string;trial_restore_domain:boolean;trial_restore_mailboxes:string[]}>(
+     'select domain,trial_restore_domain,trial_restore_mailboxes from domains where tenant_id=$1::uuid and trial_restore_domain is not null',[tenant]);
+    for(const row of suspended){
+     if(!await this.mailcow.getDomain(row.domain))continue;
+     if(row.trial_restore_domain)await this.mailcow.setDomainActive(row.domain,true);
+     const boxes=await this.mailcow.getMailboxes(row.domain);
+     for(const box of boxes)if(!box.active&&row.trial_restore_mailboxes.includes(box.address))await this.mailcow.editMailbox(box.address,undefined,'active');
+    }
+    await q('update domains set trial_restore_domain=null,trial_restore_mailboxes=null where tenant_id=$1::uuid and trial_restore_domain is not null',[tenant]);
+   }
+   const changed=await q(`update tenants set plan_id=$2::uuid,
+    trial_ends_at=case when $3::int is null then null
+      when plan_id=$2::uuid then coalesce(trial_ends_at,now()+$3::int*interval '24 hours')
+      else now()+$3::int*interval '24 hours' end,
+    updated_at=now() where id=$1::uuid returning id::text,plan_id::text as "planId",trial_ends_at as "trialEndsAt"`,[tenant,planId,plan.trial_days]);if(!changed.length)throw new NotFoundException('Khách hàng không tồn tại.');
    await q("insert into audit_logs(tenant_id,actor_email,action,resource_type,resource_id) values($1::uuid,$2,'tenant.plan_assign','tenant',$1)",[tenant,actor]);return changed;
   }))?.[0];}catch(e){if(e instanceof BadRequestException||e instanceof NotFoundException)throw e;throw new BadRequestException('Chưa xác nhận được gói trên tất cả tên miền. Hãy kiểm tra kết nối và áp dụng lại; gói trong 30NICE chưa thay đổi.');}
  }
