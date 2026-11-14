@@ -5,11 +5,43 @@ import {MailcowService} from './mailcow.service';
 import {MailboxOperations} from './mailbox-operations';
 const path='/opt/30nice-mail-cloud/.env.prod';
 if(existsSync(path))for(const line of readFileSync(path,'utf8').split(/\r?\n/)){const m=line.match(/^([A-Z0-9_]+)=(.*)$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2];}
+export async function suspendExpiredTrials(db:DatabaseService,mailcow:MailcowService){
+ const candidates=await db.query<{id:string;tenant_id:string;domain:string}>(
+  "select d.id::text,d.tenant_id::text,d.domain from domains d join tenants t on t.id=d.tenant_id where t.trial_ends_at<=now() and d.status='verified'");
+ for(const candidate of candidates??[]){
+  try{
+   await db.transaction(async q=>{
+    await q('select pg_advisory_xact_lock(hashtextextended($1,0))',[`mailboxes:${candidate.tenant_id}`]);
+    const [row]=await q(`select d.id from domains d join tenants t on t.id=d.tenant_id
+      where d.id=$1::uuid and d.trial_restore_domain is null and t.trial_ends_at<=now()`,[candidate.id]);
+    if(!row)return [];
+    const remote=await mailcow.getDomain(candidate.domain);
+    if(!remote)return [];
+    const boxes=await mailcow.getMailboxes(candidate.domain);
+    return q('update domains set trial_restore_domain=$2,trial_restore_mailboxes=$3 where id=$1::uuid',
+      [candidate.id,Number(remote.active)===1,boxes.filter(box=>box.active).map(box=>box.address)]);
+   });
+   await db.transaction(async q=>{
+    await q('select pg_advisory_xact_lock(hashtextextended($1,0))',[`mailboxes:${candidate.tenant_id}`]);
+    const [row]=await q(`select d.id from domains d join tenants t on t.id=d.tenant_id
+      where d.id=$1::uuid and d.trial_restore_domain is not null and t.trial_ends_at<=now()`,[candidate.id]);
+    if(!row)return [];
+    const remote=await mailcow.getDomain(candidate.domain);
+    if(!remote)return [];
+    for(const box of await mailcow.getMailboxes(candidate.domain))if(box.active)await mailcow.editMailbox(box.address,undefined,'disabled');
+    if(Number(remote.active)===1)await mailcow.setDomainActive(candidate.domain,false);
+    await q("delete from webmail_sessions where split_part(email,'@',2)=$1",[candidate.domain]);
+    return [];
+   });
+  }catch{console.error('Chưa tạm khóa được tên miền dùng thử; sẽ thử lại.',candidate.id);}
+ }
+}
 export async function reconcile(db:DatabaseService,mailcow:MailcowService){
+ await suspendExpiredTrials(db,mailcow);
  const snapshotAt=(await db.query<{at:string}>('select clock_timestamp()::text as at'))?.[0]?.at;
  const [remoteDomains,remoteBoxes]=await Promise.all([mailcow.getDomains(),mailcow.getMailboxes()]);
  await db.query('delete from webmail_sessions where expires_at<=now()');
- const domains=await db.query<{id:string;tenant_id:string;domain:string}>("select d.id::text,d.tenant_id::text,d.domain from domains d join tenants t on t.id=d.tenant_id where d.status='verified' and t.status='active'");
+ const domains=await db.query<{id:string;tenant_id:string;domain:string}>("select d.id::text,d.tenant_id::text,d.domain from domains d join tenants t on t.id=d.tenant_id where d.status='verified' and t.status='active' and d.trial_restore_domain is null");
  for(const d of domains||[]){
   const found=remoteDomains.find((r:{domain_name?:string;active?:number})=>r.domain_name===d.domain&&Number(r.active)===1);
   await db.query('update domains set provisioning_status=$3,provisioning_error=$4,provisioned_at=case when $3=\'ready\' then now() else provisioned_at end where id=$1::uuid and tenant_id=$2::uuid',[d.id,d.tenant_id,found?'ready':'failed',found?null:'Tên miền chưa hoạt động trong Mailcow. Chọn Kết nối dịch vụ email.']);

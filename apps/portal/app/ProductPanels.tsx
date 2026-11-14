@@ -1,15 +1,16 @@
 'use client';
 import {useEffect,useState} from 'react';import {useCustomer} from './CustomerContext';import './product-panels.css';
-type Tenant={id:string;name:string};type Plan={id:string;name:string;storageGb:number;mailboxLimit:number;mailboxMaxGb:number;active:boolean;customerCount?:number|null};
+type Tenant={id:string;name:string};type Plan={id:string;name:string;storageGb:number;mailboxLimit:number;mailboxMaxGb:number;active:boolean;customerCount?:number|null;priceVnd?:number|null;billingPeriod?:'month'|'year'|null;trialDays?:number|null};
 type PlanPreview={eligible:boolean;issues:string[];mailboxCount:number;allocatedBytes:number};
 const planNumber=new Intl.NumberFormat("vi-VN",{maximumFractionDigits:3});
 async function api(path:string,body?:unknown,method=body?'POST':'GET'){const r=await fetch('/api/api/v1'+path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const d=await r.json();if(!r.ok)throw Error(typeof d.message==='string'?d.message:'Không hoàn tất yêu cầu.');return d;}
 export function CustomerWorkspace({fixedTenantId,onContactSaved}: {fixedTenantId?:string;onContactSaved?:(name:string)=>void} = {}){
  const customer=useCustomer();
+ const [trialEndsAt,setTrialEndsAt]=useState<string|null>(null);
  const [preview,setPreview]=useState<{tenantId:string;planId:string;result:PlanPreview}|null>(null);
  const [tenants,setTenants]=useState<Tenant[]>([]),[tenant,setTenant]=useState(''),[name,setName]=useState(''),[email,setEmail]=useState(''),[phone,setPhone]=useState(''),[plan,setPlan]=useState(''),[plans,setPlans]=useState<Plan[]>([]),[currentPlan,setCurrentPlan]=useState(''),[isSuper,setIsSuper]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
  useEffect(()=>{let live=true;void Promise.all([api('/tenants'),api('/plans'),api('/auth/me')]).then(([ts,ps,me])=>{if(live){setTenants(ts);setPlans(ps);setIsSuper(me.role==='super_admin');setTenant(ts.find((t:Tenant)=>t.id===(fixedTenantId??customer.tenantId))?.id||(fixedTenantId?'':ts[0]?.id||''));}}).catch(e=>{if(live)setError(e.message);});return()=>{live=false;};},[customer.tenantId,fixedTenantId]);
- useEffect(()=>{let live=true;setName('');setEmail('');setPhone('');setCurrentPlan('');setPlan('');setPreview(null);setMessage('');setError('');if(!tenant)return;setBusy(true);void api(`/tenants/${tenant}/onboarding`).then(d=>{if(live){setName(d.tenant.name);setEmail(d.tenant.contactEmail||'');setPhone(d.tenant.contactPhone||'');setCurrentPlan(d.tenant.planName||'Theo hạn mức Mailcow hiện tại');setPlan(d.tenant.planId||'');}}).catch(e=>{if(live)setError(e.message);}).finally(()=>{if(live)setBusy(false);});return()=>{live=false;};},[tenant]);
+ useEffect(()=>{let live=true;setName('');setEmail('');setPhone('');setCurrentPlan('');setTrialEndsAt(null);setPlan('');setPreview(null);setMessage('');setError('');if(!tenant)return;setBusy(true);void api(`/tenants/${tenant}/onboarding`).then(d=>{if(live){setName(d.tenant.name);setEmail(d.tenant.contactEmail||'');setPhone(d.tenant.contactPhone||'');setCurrentPlan(d.tenant.planName||'Theo hạn mức Mailcow hiện tại');setPlan(d.tenant.planId||'');setTrialEndsAt(d.tenant.trialEndsAt??null);}}).catch(e=>{if(live)setError(e.message);}).finally(()=>{if(live)setBusy(false);});return()=>{live=false;};},[tenant]);
  const currentPreview=preview?.tenantId===tenant&&preview.planId===plan?preview.result:null;
  async function checkPlan(){
   setBusy(true);
@@ -23,8 +24,8 @@ export function CustomerWorkspace({fixedTenantId,onContactSaved}: {fixedTenantId
    setError(reason instanceof Error?reason.message:'Chưa kiểm tra được gói.');
   }finally{setBusy(false);}
  }
- async function save(kind:'contact'|'plan'){setBusy(true);setError('');setMessage('');try{await api(`/tenants/${tenant}/${kind}`,kind==='contact'?{name,contactEmail:email,contactPhone:phone}:{planId:plan},'PUT');setMessage(kind==='contact'?'Đã lưu hồ sơ doanh nghiệp.':'Đã xác nhận gói và hạn mức Mailcow.');if(kind==='plan'){setCurrentPlan(plans.find(p=>p.id===plan)?.name||'');setPreview(null);}else onContactSaved?.(name.trim());}catch(e){if(kind==='plan')setPreview(null);setError(e instanceof Error?e.message:'Chưa lưu được dữ liệu.');}finally{setBusy(false);}}
- return <section className="productPanel"><h3>Hồ sơ và gói dịch vụ khách hàng</h3>{!fixedTenantId&&<div className="productSelectors"><label>Khách hàng<select value={tenant} disabled={busy} onChange={e=>{customer.selectTenant(e.target.value);setTenant(e.target.value);}}><option value="">Chọn khách hàng</option>{tenants.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label></div>}{error&&<p className="productError" role="alert">{error}</p>}{message&&<p className="productSuccess" role="status">{message}</p>}{tenant&&<><form className="productForm" onSubmit={e=>{e.preventDefault();void save('contact');}}><label>Tên doanh nghiệp<input value={name} onChange={e=>setName(e.target.value)} required maxLength={120} disabled={busy}/></label><label>Email liên hệ<input type="email" value={email} onChange={e=>setEmail(e.target.value)} maxLength={320} disabled={busy}/></label><label>Điện thoại<input value={phone} onChange={e=>setPhone(e.target.value)} maxLength={40} disabled={busy}/></label><button className="primary" disabled={busy}>Lưu hồ sơ</button></form><div className="productNotice">Gói hiện tại: <b>{currentPlan}</b>. Dung lượng cấp phát và dung lượng thư đã dùng là hai chỉ số khác nhau.</div>{isSuper&&<form className="productForm" onSubmit={event=>{event.preventDefault();if(!busy&&currentPreview?.eligible)void save('plan');}}>
+ async function save(kind:'contact'|'plan'){setBusy(true);setError('');setMessage('');try{const saved=await api(`/tenants/${tenant}/${kind}`,kind==='contact'?{name,contactEmail:email,contactPhone:phone}:{planId:plan},'PUT');setMessage(kind==='contact'?'Đã lưu hồ sơ doanh nghiệp.':'Đã xác nhận gói và hạn mức Mailcow.');if(kind==='plan'){setTrialEndsAt(saved.trialEndsAt??null);setCurrentPlan(plans.find(p=>p.id===plan)?.name||'');setPreview(null);}else onContactSaved?.(name.trim());}catch(e){if(kind==='plan')setPreview(null);setError(e instanceof Error?e.message:'Chưa lưu được dữ liệu.');}finally{setBusy(false);}}
+ return <section className="productPanel"><h3>Hồ sơ và gói dịch vụ khách hàng</h3>{!fixedTenantId&&<div className="productSelectors"><label>Khách hàng<select value={tenant} disabled={busy} onChange={e=>{customer.selectTenant(e.target.value);setTenant(e.target.value);}}><option value="">Chọn khách hàng</option>{tenants.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label></div>}{error&&<p className="productError" role="alert">{error}</p>}{message&&<p className="productSuccess" role="status">{message}</p>}{tenant&&<><form className="productForm" onSubmit={e=>{e.preventDefault();void save('contact');}}><label>Tên doanh nghiệp<input value={name} onChange={e=>setName(e.target.value)} required maxLength={120} disabled={busy}/></label><label>Email liên hệ<input type="email" value={email} onChange={e=>setEmail(e.target.value)} maxLength={320} disabled={busy}/></label><label>Điện thoại<input value={phone} onChange={e=>setPhone(e.target.value)} maxLength={40} disabled={busy}/></label><button className="primary" disabled={busy}>Lưu hồ sơ</button></form><div className="productNotice">Gói hiện tại: <b>{currentPlan}</b>. {trialEndsAt&&<span>{Date.parse(trialEndsAt)<=Date.now()?'Đã hết hạn dùng thử lúc':'Dùng thử đến'} {new Intl.DateTimeFormat('vi-VN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Ho_Chi_Minh'}).format(new Date(trialEndsAt))}. </span>}Dung lượng cấp phát và dung lượng thư đã dùng là hai chỉ số khác nhau.</div>{isSuper&&<form className="productForm" onSubmit={event=>{event.preventDefault();if(!busy&&currentPreview?.eligible)void save('plan');}}>
   <label>Gói muốn áp dụng<select aria-label="Gói muốn áp dụng" value={plan} onChange={event=>{setPlan(event.target.value);setPreview(null);setError('');setMessage('');}} disabled={busy} required>
    <option value="">Chọn gói đã tạo</option>{plans.filter(item=>item.active).map(item=><option key={item.id} value={item.id}>{item.name} · {item.mailboxLimit} hộp thư · {item.storageGb} GiB</option>)}
   </select></label>
@@ -38,6 +39,7 @@ export function CustomerWorkspace({fixedTenantId,onContactSaved}: {fixedTenantId
  </form>}</>}</section>;
 }
 const emailPlans = [
+ {name:'Email Free', description:'Dùng thử miễn phí 30 ngày'},
  {name:'Email Basic', description:'Cá nhân, hộ kinh doanh, doanh nghiệp nhỏ'},
  {name:'Email Business', description:'Doanh nghiệp cần email ổn định, chuyên nghiệp'},
  {name:'Email Professional', description:'Doanh nghiệp có nhu cầu sử dụng lớn'},
@@ -49,17 +51,38 @@ function planOrder(name: string) {
  return index === -1 ? emailPlans.length : index;
 }
 
-export function ServicePlans(){const [rows,setRows]=useState<Plan[]|null>(null),[name,setName]=useState(''),[count,setCount]=useState('10'),[storage,setStorage]=useState('10'),[max,setMax]=useState('5'),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+export function ServicePlans(){
+ const [priceEditor,setPriceEditor]=useState<{id:string;price:string;period:'month'|'year'}|null>(null);
+ const [priceMessage,setPriceMessage]=useState('');
+ async function savePrice(){
+  if(!priceEditor)return;
+  setBusy(true);setError('');setPriceMessage('');
+  try{
+   await api(`/plans/${priceEditor.id}/price`,{priceVnd:priceEditor.price===''?null:Number(priceEditor.price),billingPeriod:priceEditor.period},'PUT');
+   setRows(await api('/plans'));setPriceEditor(null);setPriceMessage('Đã lưu đơn giá.');
+  }catch(e){setError(e instanceof Error?e.message:'Chưa lưu được đơn giá.');}
+  finally{setBusy(false);}
+ }
+ const [rows,setRows]=useState<Plan[]|null>(null),[name,setName]=useState(''),[count,setCount]=useState('10'),[storage,setStorage]=useState('10'),[max,setMax]=useState('5'),[error,setError]=useState(''),[busy,setBusy]=useState(false);
  useEffect(()=>{let live=true;void api('/plans').then(d=>{if(live)setRows(d);}).catch(e=>{if(live)setError(e.message);});return()=>{live=false;};},[]);
  async function create(){setBusy(true);setError('');try{await api('/plans',{name,mailboxLimit:Number(count),storageGb:Number(storage),mailboxMaxGb:Number(max)});setRows(await api('/plans'));setName('');}catch(e){setError(e instanceof Error?e.message:'Không tạo được gói.');}finally{setBusy(false);}}
  return <section className="productPanel"><h2>Gói dịch vụ</h2><p>Tạo mẫu hạn mức, sau đó áp dụng ở hồ sơ khách hàng. Tạo mẫu không thay đổi dịch vụ đang chạy.</p>{error&&<p className="productError" role="alert">{error}</p>}<form className="productForm" onSubmit={e=>{e.preventDefault();void create();}}><label>Tên gói<input required maxLength={120} value={name} onChange={e=>setName(e.target.value)} disabled={busy}/></label><label>Số hộp thư<input required type="number" min="1" max="100000" value={count} onChange={e=>setCount(e.target.value)} disabled={busy}/></label><label>Tổng dung lượng (GiB)<input required type="number" min="1" max="100000" value={storage} onChange={e=>setStorage(e.target.value)} disabled={busy}/></label><label>Tối đa mỗi hộp thư (GiB)<input required type="number" min="1" max={Math.min(1000,Number(storage))} value={max} onChange={e=>setMax(e.target.value)} disabled={busy}/></label><button className="primary" disabled={busy}>{busy?'Đang tạo…':'Tạo mẫu gói'}</button></form>{!rows&&!error&&<p role="status">Đang tải danh sách gói…</p>}
+ {priceMessage&&<p className="productSuccess" role="status">{priceMessage}</p>}
+ {priceEditor&&<form className="productForm" onSubmit={e=>{e.preventDefault();void savePrice();}}>
+  <label>Đơn giá (VNĐ)<input type="number" min="0" max="2147483647" step="1" value={priceEditor.price} disabled={busy} onChange={e=>setPriceEditor({...priceEditor,price:e.target.value})}/></label>
+  <label>Kỳ tính phí<select value={priceEditor.period} disabled={busy} onChange={e=>setPriceEditor({...priceEditor,period:e.target.value==='year'?'year':'month'})}><option value="month">Theo tháng</option><option value="year">Theo năm</option></select></label>
+  <button className="primary" disabled={busy}>Lưu đơn giá</button><button type="button" disabled={busy} onClick={()=>setPriceEditor(null)}>Hủy</button>
+  <p>Để trống đơn giá nếu chưa niêm yết.</p>
+ </form>}
  {rows?.length===0&&<p>Chưa có mẫu gói. Anh có thể tạo gói ở trên.</p>}
  {!!rows?.length&&<div className="productTableScroll" tabIndex={0} role="region" aria-label="So sánh gói dịch vụ">
   <table className="planComparison">
-   <thead><tr><th scope="col">Gói</th><th scope="col">Số hộp thư</th><th scope="col">Tổng dung lượng</th><th scope="col">Tối đa mỗi hộp thư</th><th scope="col">Doanh nghiệp dùng gói</th><th scope="col">Trạng thái</th></tr></thead>
+   <thead><tr><th scope="col">Gói</th><th scope="col">Số hộp thư</th><th scope="col">Tổng dung lượng</th><th scope="col">Tối đa mỗi hộp thư</th><th scope="col">Đơn giá</th><th scope="col">Doanh nghiệp dùng gói</th><th scope="col">Trạng thái</th></tr></thead>
    <tbody>{[...rows].sort((a,b)=>planOrder(a.name)-planOrder(b.name)).map(item=><tr key={item.id}>
     <th scope="row">{item.name}<small className="planDescription">{emailPlans.find(plan=>plan.name===item.name)?.description}</small></th><td>{planNumber.format(item.mailboxLimit)}</td><td>{planNumber.format(item.storageGb)} GiB</td>
-    <td>{planNumber.format(item.mailboxMaxGb)} GiB</td><td>{item.customerCount==null?'—':planNumber.format(item.customerCount)}</td>
+    <td>{planNumber.format(item.mailboxMaxGb)} GiB</td><td>{item.trialDays?`Miễn phí · ${item.trialDays} ngày`:<>{
+      item.priceVnd==null?'Chưa đặt':`${planNumber.format(item.priceVnd)} ₫/${item.billingPeriod==='year'?'năm':'tháng'}`
+     } <button type="button" disabled={busy} aria-label={`Sửa đơn giá ${item.name}`} onClick={()=>setPriceEditor({id:item.id,price:item.priceVnd==null?'':String(item.priceVnd),period:item.billingPeriod??'month'})}>Sửa</button></>}</td><td>{item.customerCount==null?'—':planNumber.format(item.customerCount)}</td>
     <td>{item.active?'Đang cung cấp':'Ngừng cung cấp'}</td>
    </tr>)}</tbody>
   </table>
