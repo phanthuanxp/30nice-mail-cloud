@@ -30,6 +30,7 @@ export async function suspendExpiredTrials(db:DatabaseService,mailcow:MailcowSer
     if(!remote)return [];
     for(const box of await mailcow.getMailboxes(candidate.domain))if(box.active)await mailcow.editMailbox(box.address,undefined,'disabled');
     if(Number(remote.active)===1)await mailcow.setDomainActive(candidate.domain,false);
+    await q("delete from webmail_sessions where split_part(email,'@',2)=$1",[candidate.domain]);
     return [];
    });
   }catch{console.error('Chưa tạm khóa được tên miền dùng thử; sẽ thử lại.',candidate.id);}

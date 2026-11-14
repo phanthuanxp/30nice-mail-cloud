@@ -95,9 +95,9 @@ export class MailCloudService {
   }
   async connectDomain(tenantId:string,domainId:string,actorEmail='system'){
     const row=await this.domainConfig(tenantId,domainId);if(row.status!=='verified')throw new BadRequestException('Cần xác minh quyền sở hữu tên miền trước.');
+    const expired=await this.database.query('select id from tenants where id=$1::uuid and trial_ends_at<=now()',[tenantId]);
+    if(expired?.length)throw new BadRequestException('Gói dùng thử đã hết hạn. Hãy nâng cấp gói để kết nối tên miền.');
     try{
-      const expired=await this.database.query('select id from tenants where id=$1::uuid and trial_ends_at<=now()',[tenantId]);
-      if(expired?.length)throw new BadRequestException('Gói dùng thử đã hết hạn. Hãy nâng cấp gói để kết nối tên miền.');
       await this.mailcow.ensureDomain(row.domain);
       const policy=await this.database.query<{storage_gb:number;mailbox_limit:number;mailbox_max_gb:number}>('select p.storage_gb,p.mailbox_limit,p.mailbox_max_gb from tenants t join service_plans p on p.id=t.plan_id where t.id=$1::uuid',[tenantId]);
       if(policy?.[0])await this.mailcow.setDomainLimits(row.domain,policy[0].storage_gb,policy[0].mailbox_limit,policy[0].mailbox_max_gb);
