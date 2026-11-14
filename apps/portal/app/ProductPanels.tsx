@@ -37,6 +37,18 @@ export function CustomerWorkspace({fixedTenantId,onContactSaved}: {fixedTenantId
   </div>}
  </form>}</>}</section>;
 }
+const emailPlans = [
+ {name:'Email Basic', description:'Cá nhân, hộ kinh doanh, doanh nghiệp nhỏ'},
+ {name:'Email Business', description:'Doanh nghiệp cần email ổn định, chuyên nghiệp'},
+ {name:'Email Professional', description:'Doanh nghiệp có nhu cầu sử dụng lớn'},
+ {name:'Email Enterprise', description:'Tổ chức, doanh nghiệp lớn, nhiều tài khoản'},
+];
+
+function planOrder(name: string) {
+ const index = emailPlans.findIndex(plan => plan.name === name);
+ return index === -1 ? emailPlans.length : index;
+}
+
 export function ServicePlans(){const [rows,setRows]=useState<Plan[]|null>(null),[name,setName]=useState(''),[count,setCount]=useState('10'),[storage,setStorage]=useState('10'),[max,setMax]=useState('5'),[error,setError]=useState(''),[busy,setBusy]=useState(false);
  useEffect(()=>{let live=true;void api('/plans').then(d=>{if(live)setRows(d);}).catch(e=>{if(live)setError(e.message);});return()=>{live=false;};},[]);
  async function create(){setBusy(true);setError('');try{await api('/plans',{name,mailboxLimit:Number(count),storageGb:Number(storage),mailboxMaxGb:Number(max)});setRows(await api('/plans'));setName('');}catch(e){setError(e instanceof Error?e.message:'Không tạo được gói.');}finally{setBusy(false);}}
@@ -45,8 +57,8 @@ export function ServicePlans(){const [rows,setRows]=useState<Plan[]|null>(null),
  {!!rows?.length&&<div className="productTableScroll" tabIndex={0} role="region" aria-label="So sánh gói dịch vụ">
   <table className="planComparison">
    <thead><tr><th scope="col">Gói</th><th scope="col">Số hộp thư</th><th scope="col">Tổng dung lượng</th><th scope="col">Tối đa mỗi hộp thư</th><th scope="col">Doanh nghiệp dùng gói</th><th scope="col">Trạng thái</th></tr></thead>
-   <tbody>{rows.map(item=><tr key={item.id}>
-    <th scope="row">{item.name}</th><td>{planNumber.format(item.mailboxLimit)}</td><td>{planNumber.format(item.storageGb)} GiB</td>
+   <tbody>{[...rows].sort((a,b)=>planOrder(a.name)-planOrder(b.name)).map(item=><tr key={item.id}>
+    <th scope="row">{item.name}<small className="planDescription">{emailPlans.find(plan=>plan.name===item.name)?.description}</small></th><td>{planNumber.format(item.mailboxLimit)}</td><td>{planNumber.format(item.storageGb)} GiB</td>
     <td>{planNumber.format(item.mailboxMaxGb)} GiB</td><td>{item.customerCount==null?'—':planNumber.format(item.customerCount)}</td>
     <td>{item.active?'Đang cung cấp':'Ngừng cung cấp'}</td>
    </tr>)}</tbody>

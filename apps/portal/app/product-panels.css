@@ -5,3 +5,16 @@
 .planPreview ul { padding-inline-start:20px; }
 .planComparison { min-width:650px; }
 .planComparison th[scope="row"] { color:#1c3657; background:#fff; font-size:13px; letter-spacing:normal; text-transform:none; overflow-wrap:anywhere; }
+
+.planDescription {
+  display: block;
+  margin-top: 4px;
+  color: #526781;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.planDescription:empty {
+  display: none;
+}
