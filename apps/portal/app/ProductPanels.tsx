@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useState} from 'react';import {useCustomer} from './CustomerContext';import './product-panels.css';
-type Tenant={id:string;name:string};type Plan={id:string;name:string;storageGb:number;mailboxLimit:number;mailboxMaxGb:number;active:boolean;customerCount?:number|null;monthlyPriceVnd?:number|null;yearlyPriceVnd?:number|null;quarterlyPriceVnd?:number|null;semiannualPriceVnd?:number|null;trialDays?:number|null};
+type Tenant={id:string;name:string};type Plan={id:string;name:string;storageGb:number;mailboxLimit:number;mailboxMaxGb:number;active:boolean;customerCount?:number|null;yearlyPriceVnd?:number|null;biennialPriceVnd?:number|null;semiannualPriceVnd?:number|null;trialDays?:number|null};
 type PlanPreview={eligible:boolean;issues:string[];mailboxCount:number;allocatedBytes:number};
 const planNumber=new Intl.NumberFormat("vi-VN",{maximumFractionDigits:3});
 async function api(path:string,body?:unknown,method=body?'POST':'GET'){const r=await fetch('/api/api/v1'+path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const d=await r.json();if(!r.ok)throw Error(typeof d.message==='string'?d.message:'Không hoàn tất yêu cầu.');return d;}
@@ -39,7 +39,7 @@ export function CustomerWorkspace({fixedTenantId,onContactSaved}: {fixedTenantId
  </form>}</>}</section>;
 }
 const emailPlans = [
- {name:'Email Free', description:'Dùng thử miễn phí 30 ngày'},
+ {name:'Email Free', description:'Dùng thử email doanh nghiệp'},
  {name:'Email Basic', description:'Cá nhân, hộ kinh doanh, doanh nghiệp nhỏ'},
  {name:'Email Business', description:'Doanh nghiệp cần email ổn định, chuyên nghiệp'},
  {name:'Email Professional', description:'Doanh nghiệp có nhu cầu sử dụng lớn'},
@@ -52,10 +52,9 @@ function planOrder(name: string) {
 }
 
 const billingTerms = [
- {key:'monthlyPriceVnd', months:1},
- {key:'quarterlyPriceVnd', months:3},
  {key:'semiannualPriceVnd', months:6},
  {key:'yearlyPriceVnd', months:12},
+ {key:'biennialPriceVnd', months:24},
 ] as const;
 type BillingPriceKey=(typeof billingTerms)[number]['key'];
 
@@ -90,7 +89,7 @@ export function ServicePlans(){
     <td>{planNumber.format(item.mailboxMaxGb)} GiB</td><td>{item.trialDays?`Miễn phí · ${item.trialDays} ngày`: <>
       {billingTerms.map(({key,months})=><div key={key}>{months} tháng · {item[key]==null?'Chưa đặt':`${planNumber.format(item[key])} ₫`}</div>)}
       <button type="button" disabled={busy} aria-label={`Sửa đơn giá ${item.name}`} onClick={()=>setPriceEditor({id:item.id,prices:{
-       monthlyPriceVnd:String(item.monthlyPriceVnd??''),quarterlyPriceVnd:String(item.quarterlyPriceVnd??''),
+       biennialPriceVnd:String(item.biennialPriceVnd??''),
        semiannualPriceVnd:String(item.semiannualPriceVnd??''),yearlyPriceVnd:String(item.yearlyPriceVnd??''),
       }})}>Sửa</button></>}</td><td>{item.customerCount==null?'—':planNumber.format(item.customerCount)}</td>
     <td>{item.active?'Đang cung cấp':'Ngừng cung cấp'}</td>
